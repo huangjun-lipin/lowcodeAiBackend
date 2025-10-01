@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const JSON5 = require('json5');
 const Ajv = require('ajv');
+const { jsonrepair } = require('jsonrepair');
 
 class SiliconFlowService {
   constructor() {
@@ -203,7 +204,84 @@ class SiliconFlowService {
     
     return `你是一个专业的低代码平台AI助手，专门帮助用户生成符合阿里低代码引擎规范的完整页面schema。
 
-你的任务是根据用户的自然语言描述，生成对应的低代码页面schema，包含完整的页面结构、数据源、状态管理、生命周期和方法定义。
+🚨🚨🚨 输出格式要求 🚨🚨🚨
+
+你必须严格按照以下JSON格式输出，不能有任何遗漏：
+
+\`\`\`json
+{
+  "componentName": "Page",
+  "id": "page_unique_id",
+  "props": {
+    "ref": "outerView",
+    "style": {}
+  },
+  "fileName": "页面文件名",
+  "dataSource": {
+    "list": [
+      {
+        "type": "fetch",
+        "id": "urlParams",
+        "isInit": true,
+        "options": {
+          "method": "GET",
+          "uri": "/api/data",
+          "params": {},
+          "headers": {},
+          "timeout": 5000,
+          "isCors": true
+        },
+        "shouldFetch": {
+          "type": "JSFunction",
+          "value": "function() { return true; }"
+        }
+      }
+    ]
+  },
+  "state": {
+    "text": {
+      "type": "JSExpression",
+      "value": "'hello world'"
+    }
+  },
+  "css": "body { margin: 0; }",
+  "lifeCycles": {
+    "componentDidMount": {
+      "type": "JSFunction",
+      "value": "function componentDidMount() { console.log('页面加载完成'); }"
+    }
+  },
+  "methods": {
+    "handleClick": {
+      "type": "JSFunction",
+      "value": "function handleClick() { console.log('点击事件'); }"
+    }
+  },
+  "originCode": "import React, { Component } from 'react'; class Page extends Component { render() { return <div>页面内容</div>; } } export default Page;",
+  "hidden": false,
+  "title": "页面标题",
+  "isLocked": false,
+  "condition": true,
+  "conditionGroup": "",
+  "children": [
+    // 这里放置子组件数组
+  ]
+}
+\`\`\`
+
+🚨 重要提醒：
+1. 你必须生成上述完整的JSON对象，不能只生成children数组
+2. 每个字段都必须存在，不能遗漏任何一个
+3. 如果你只返回children数组或部分字段，这将被视为错误
+4. 你的整个响应必须是一个完整的、可解析的JSON对象
+
+## 🚨 核心要求：生成完整可用的页面
+**必须确保生成的页面具备以下特性：**
+1. **完整的模拟数据**：在state中生成充足的模拟数据，确保页面有内容展示
+2. **完整的交互逻辑**：所有按钮、输入框、选择器都必须有对应的事件处理方法
+3. **完整的状态管理**：包含所有必要的状态变量和状态更新逻辑
+4. **完整的方法实现**：每个交互操作都要有完整的方法实现，不能只是空函数
+5. **事件绑定完整**：所有组件的事件属性都要正确绑定到对应的方法
 
 ## 🚨 重要：物料包使用规范
 **必须严格遵守以下物料使用优先级：**
@@ -434,11 +512,13 @@ ${docsContent}
 
 请严格按照以下完整的JSON格式返回schema，不要包含任何其他文字说明：
 
+🚨🚨🚨 必须返回完整的JSON对象，包含所有字段 🚨🚨🚨
+
 {
   "componentName": "Page",
-  "id": "唯一页面ID",
+  "id": "node_" + 时间戳 + 随机字符,
   "props": {
-    "ref": "页面引用名",
+    "ref": "outerView",
     "style": {
       "height": "100%"
     }
@@ -455,9 +535,9 @@ ${docsContent}
           "isCors": true,
           "timeout": 5000,
           "headers": {},
-          "uri": "接口地址"
+          "uri": "mock/data.json"
         },
-        "id": "数据源ID",
+        "id": "dataSourceId",
         "shouldFetch": {
           "type": "JSFunction",
           "value": "function() { return true; }"
@@ -466,38 +546,74 @@ ${docsContent}
     ]
   },
   "state": {
-    "变量名": {
+    "loading": {
       "type": "JSExpression",
-      "value": "初始值"
+      "value": "false"
+    },
+    "data": {
+      "type": "JSExpression", 
+      "value": "[]"
     }
   },
-  "css": "页面样式定义",
+  "css": "body { font-size: 12px; }",
   "lifeCycles": {
     "componentDidMount": {
       "type": "JSFunction",
-      "value": "function componentDidMount() { // 组件挂载后执行 }"
+      "value": "function componentDidMount() { console.log('页面已挂载'); }"
     },
     "componentWillUnmount": {
       "type": "JSFunction",
-      "value": "function componentWillUnmount() { // 组件卸载前执行 }"
+      "value": "function componentWillUnmount() { console.log('页面将卸载'); }"
     }
   },
   "methods": {
-    "方法名": {
+    "handleClick": {
       "type": "JSFunction",
-      "value": "function 方法名() { // 方法实现 }"
+      "value": "function handleClick() { console.log('按钮被点击'); }"
     }
   },
-  "originCode": "class LowcodeComponent extends Component {\\n  state = {\\n    // 这里的state要与上面state字段完全对应\\n  }\\n  componentDidMount() {\\n    // 这里的生命周期要与上面lifeCycles字段完全对应\\n  }\\n  componentWillUnmount() {\\n    // 这里的生命周期要与上面lifeCycles字段完全对应\\n  }\\n  // 这里的方法要与上面methods字段完全对应\\n}",
+  "originCode": "class LowcodeComponent extends Component { state = { loading: false, data: [] }; componentDidMount() { console.log('页面已挂载'); } componentWillUnmount() { console.log('页面将卸载'); } handleClick() { console.log('按钮被点击'); } render() { return <div>页面内容</div>; } }",
   "hidden": false,
   "title": "",
   "isLocked": false,
   "condition": true,
   "conditionGroup": "",
   "children": [
-    // 页面子组件数组
+    // 这里放置子组件数组
   ]
 }
+
+🚨 重要提醒：你的响应必须是一个完整的JSON对象，包含上述所有字段！🚨
+
+## 🚨 强制要求：必须生成完整的功能实现
+**以下要求必须严格执行，不允许生成空的或不完整的实现：**
+
+### 1. 状态管理强制要求
+- **必须在state中定义所有必要的状态变量**，包括：
+  - 数据列表（如productList、userList等）
+  - 搜索关键词（如searchKeyword）
+  - 筛选条件（如filterConditions）
+  - 分页信息（如pagination）
+  - 加载状态（如loading）
+- **必须为每个状态变量提供合理的初始值**，特别是数据列表必须包含至少3-5条模拟数据
+
+### 2. 方法实现强制要求
+- **必须为每个交互操作提供完整的方法实现**，不允许空函数
+- **搜索功能**：必须实现完整的搜索逻辑，包括关键词匹配和结果更新
+- **筛选功能**：必须实现完整的筛选逻辑，包括条件判断和结果过滤
+- **分页功能**：必须实现完整的分页逻辑，包括页码切换和数据更新
+- **表单处理**：必须实现完整的表单提交、验证和重置逻辑
+
+### 3. 事件绑定强制要求
+- **所有按钮必须绑定onClick事件**
+- **所有输入框必须绑定onChange事件**
+- **所有选择器必须绑定onChange事件**
+- **所有表格必须绑定相关的操作事件**
+
+### 4. 生命周期强制要求
+- **必须在componentDidMount中初始化数据**
+- **必须包含数据加载逻辑**
+- **必须处理异步操作的状态更新**
 
 重要注意事项：
 1. **完整性要求**：必须包含所有字段：componentName、id、props、fileName、dataSource、state、css、lifeCycles、methods、originCode、children等
@@ -519,6 +635,105 @@ ${docsContent}
 - **列表页面**：包含数据查询接口、分页方法、搜索方法
 - **详情页面**：包含详情查询接口、编辑保存方法
 - **表单页面**：包含提交接口、表单验证方法
+
+## 🎯 重要：完整功能实现要求
+
+**必须确保生成的页面具备完整的功能性，用户只需添加真实接口即可直接使用：**
+
+### 1. 动态数据生成要求
+- **模拟数据完整性**：如果页面没有真实接口，必须在state中生成完整的模拟数据
+- **数据结构合理性**：模拟数据的结构要符合实际业务场景，包含足够的字段和数据量
+- **数据类型多样性**：包含字符串、数字、布尔值、数组、对象等多种数据类型
+- **列表数据充实**：对于表格、列表组件，至少生成5-10条模拟数据记录
+- **分页数据支持**：为分页组件提供总数、当前页、每页条数等完整的分页信息
+
+### 2. 组件间交互逻辑处理
+- **表单交互**：表单组件要能正确响应用户输入，包含验证、提交、重置等功能
+- **列表操作**：列表组件要支持增删改查操作，每个操作都要有对应的方法实现
+- **分页功能**：分页组件要能正确响应页码变化，更新列表数据显示
+- **搜索筛选**：搜索组件要能根据输入条件筛选数据并更新显示
+- **弹窗交互**：弹窗的打开、关闭、确认、取消等操作要有完整的状态管理
+- **按钮响应**：所有按钮都要有对应的点击事件处理方法
+
+### 3. 状态管理完整性
+- **页面状态**：定义页面所需的所有状态变量，包含加载状态、错误状态、数据状态等
+- **表单状态**：表单的验证状态、提交状态、字段值状态等
+- **列表状态**：当前页码、每页条数、总条数、选中项等状态
+- **交互状态**：弹窗显示状态、按钮禁用状态、加载状态等
+
+### 4. 方法实现完整性
+- **数据操作方法**：增删改查的完整实现，包含成功和失败的处理逻辑
+- **表单处理方法**：表单提交、验证、重置等方法的完整实现
+- **分页处理方法**：页码变化、每页条数变化的处理方法
+- **搜索处理方法**：搜索条件变化、搜索执行的处理方法
+- **筛选处理方法**：筛选条件变化、筛选执行的处理方法
+
+### 5. 用户体验优化
+- **加载状态**：为异步操作添加loading状态提示
+- **错误处理**：为可能失败的操作添加错误提示和处理
+- **成功反馈**：为成功操作添加成功提示信息
+- **数据验证**：为表单输入添加合理的验证规则
+- **确认提示**：为删除等危险操作添加确认提示
+
+**最终目标：生成的页面应该是一个完整的、可交互的、功能齐全的原型，用户只需要将接口地址替换为真实接口即可投入使用。**
+
+## 📋 具体实现要求
+
+### 商品列表页面必须包含：
+1. **完整的模拟数据**：在state中至少包含5-10条商品数据，每条数据包含id、name、price、category、stock等字段
+2. **搜索功能**：包含搜索关键词状态、搜索方法、搜索结果筛选逻辑
+3. **筛选功能**：包含分类筛选状态、筛选方法、筛选结果更新逻辑
+4. **分页功能**：包含当前页码、每页条数、总条数状态和分页切换方法
+5. **事件绑定**：所有输入框、按钮、选择器都要绑定对应的事件处理方法
+
+### 表单页面必须包含：
+1. **表单数据状态**：包含所有表单字段的初始值和当前值
+2. **验证状态**：包含错误信息状态和验证方法
+3. **提交状态**：包含提交中状态和提交成功/失败处理
+4. **字段变更方法**：每个表单字段都要有对应的变更处理方法
+5. **完整验证逻辑**：包含必填验证、格式验证等完整的验证规则
+
+### 数据展示页面必须包含：
+1. **数据加载状态**：包含loading状态和数据获取方法
+2. **数据展示逻辑**：包含数据格式化、条件显示等逻辑
+3. **交互操作**：包含编辑、删除、查看详情等操作方法
+4. **状态更新**：操作后的状态更新和界面刷新逻辑
+
+**重要提醒：每个生成的页面都必须具备完整的功能性和交互性，确保用户可以直接使用！**
+- **表单处理方法**：表单验证、提交、重置等方法的完整实现
+- **分页处理方法**：页码变化、每页条数变化的处理方法
+- **搜索处理方法**：搜索条件变化、搜索执行的处理方法
+- **状态更新方法**：各种状态变化的处理方法
+
+### 5. 用户体验优化
+- **加载状态**：为异步操作添加加载状态提示
+- **错误处理**：为可能出错的操作添加错误处理和提示
+- **成功反馈**：为用户操作添加成功反馈提示
+- **数据验证**：为表单输入添加合理的验证规则
+- **操作确认**：为删除等危险操作添加确认提示
+
+**目标：生成的页面应该是一个功能完整、交互流畅的原型，用户只需要将模拟数据替换为真实接口调用即可投入使用。**
+
+🚨 **输出格式要求：必须严格按照以下JSON格式输出完整的schema，不允许省略任何字段：**
+
+{
+  "componentName": "Page",
+  "id": "node_xxx",
+  "props": {},
+  "fileName": "页面文件名",
+  "dataSource": {"list": []},
+  "state": {"变量名": {"type": "JSExpression", "value": "初始值"}},
+  "css": "页面样式",
+  "lifeCycles": {"componentDidMount": {"type": "JSFunction", "value": "function componentDidMount() {}"}},
+  "methods": {"方法名": {"type": "JSFunction", "value": "function 方法名() {}"}},
+  "originCode": "完整的React组件代码",
+  "hidden": false,
+  "title": "",
+  "isLocked": false,
+  "condition": true,
+  "conditionGroup": "",
+  "children": []
+}
 
 现在请根据用户需求生成对应的完整页面schema。`;
   }
@@ -554,13 +769,61 @@ ${docsContent}
         });
       }
 
-      const response = await this.client.post('/v1/chat/completions', {
+      const requestData = {
         model: 'deepseek-ai/DeepSeek-V3',
         messages: messages,
         temperature: 0.3,
         max_tokens: 32000, // 设置为合理的tokens数量，避免超出限制
         stream: false
-      }, this.defaultConfig);
+      };
+
+      // 打印请求参数
+      console.log('🚀 [Silicon Flow API - generateSchema] 发送请求:');
+      console.log('📍 URL:', `${this.baseURL}/v1/chat/completions`);
+      console.log('📋 请求数据:', JSON.stringify({
+        model: requestData.model,
+        temperature: requestData.temperature,
+        max_tokens: requestData.max_tokens,
+        stream: requestData.stream,
+        messages: requestData.messages.map((msg, index) => ({
+          index,
+          role: msg.role,
+          content: msg.content ? `${msg.content.substring(0, 200)}${msg.content.length > 200 ? '...(截断)' : ''}` : msg.content
+        }))
+      }, null, 2));
+      console.log('⚙️ 请求配置:', JSON.stringify({
+        baseURL: this.defaultConfig.baseURL,
+        timeout: this.defaultConfig.timeout,
+        headers: {
+          'Content-Type': this.defaultConfig.headers['Content-Type'],
+          'Authorization': `Bearer ${this.apiKey.substring(0, 10)}...`
+        }
+      }, null, 2));
+
+      const response = await this.client.post('/v1/chat/completions', requestData, this.defaultConfig);
+
+      // 打印响应数据
+      console.log('📥 [Silicon Flow API - generateSchema] 收到响应:');
+      console.log('📊 响应状态:', response.status, response.statusText);
+      console.log('📋 响应头:', JSON.stringify({
+        'content-type': response.headers['content-type'],
+        'content-length': response.headers['content-length']
+      }, null, 2));
+      console.log('📄 响应数据结构:', JSON.stringify({
+        id: response.data.id,
+        object: response.data.object,
+        created: response.data.created,
+        model: response.data.model,
+        usage: response.data.usage,
+        choices: response.data.choices?.map((choice, index) => ({
+          index,
+          finish_reason: choice.finish_reason,
+          message: {
+            role: choice.message?.role,
+            content: choice.message?.content ? `${choice.message.content.substring(0, 300)}${choice.message.content.length > 300 ? '...(截断)' : ''}` : choice.message?.content
+          }
+        }))
+      }, null, 2));
 
       // 记录API调用结束时间
       const apiEndTime = Date.now();
@@ -568,6 +831,12 @@ ${docsContent}
       console.log(`🕒 大模型API调用耗时: ${apiCallDuration}ms`);
 
       const content = response.data.choices[0].message.content;
+      
+      // 打印AI模型的原始响应内容
+      console.log('🔍 AI模型原始响应内容 (前1000字符):');
+      console.log(content.substring(0, 1000));
+      console.log('🔍 AI模型原始响应内容 (后1000字符):');
+      console.log(content.substring(Math.max(0, content.length - 1000)));
       
       // 使用增强的JSON解析逻辑
       const parsedResult = this.parseComplexSchema(content);
@@ -747,7 +1016,19 @@ ${docsContent}
       // 2. JSON5解析（支持注释、尾随逗号等）
       () => JSON5.parse(cleanContent),
       
-      // 3. 移除注释后的JSON解析
+      // 3. 使用jsonrepair修复后再解析
+      () => {
+        const repairedJson = jsonrepair(cleanContent);
+        return JSON.parse(repairedJson);
+      },
+      
+      // 4. jsonrepair + JSON5组合解析
+      () => {
+        const repairedJson = jsonrepair(cleanContent);
+        return JSON5.parse(repairedJson);
+      },
+      
+      // 5. 移除注释后的JSON解析
       () => {
         const withoutComments = cleanContent
           .replace(/\/\*[\s\S]*?\*\//g, '') // 移除块注释
@@ -756,13 +1037,64 @@ ${docsContent}
         return JSON.parse(withoutComments);
       },
       
-      // 4. 宽松的JSON5解析（处理更多边缘情况）
+      // 6. 处理JavaScript表达式的解析
+      () => {
+        let jsFixedContent = cleanContent
+          // 处理对象和数组的字符串化问题
+          .replace(/:\s*\[object Object\]/g, ': {}')
+          .replace(/"\[object Object\]"/g, '{}')
+          .replace(/,\s*\[object Object\]/g, ', {}')
+          // 处理数组中的[object Object]
+          .replace(/\[\s*\[object Object\](?:\s*,\s*\[object Object\])*\s*\]/g, '[{}]')
+          // 处理originCode字段中的[object Object]问题
+          .replace(/"originCode":\s*"[^"]*\[object Object\][^"]*"/g, (match) => {
+            // 提取originCode的值并修复其中的[object Object]
+            const codeMatch = match.match(/"originCode":\s*"([^"]*)"/);
+            if (codeMatch) {
+              let code = codeMatch[1];
+              // 修复state中的[object Object]
+              code = code.replace(/state\s*=\s*\{[^}]*\[object Object\][^}]*\}/g, 
+                'state = { "loading": false, "data": [] }');
+              return `"originCode": "${code}"`;
+            }
+            return match;
+          })
+          // 确保originCode与schema的state、methods保持一致
+          .replace(/"originCode":\s*"([^"]*)"/g, (match, code) => {
+            // 检查是否包含[object Object]并进行修复
+            if (code.includes('[object Object]')) {
+              // 替换state中的[object Object]为合理的默认值
+              code = code.replace(/state\s*=\s*\{[^}]*\[object Object\][^}]*\}/g, 
+                'state = {\\n    "loading": false,\\n    "data": [],\\n    "filterParams": {}\\n  }');
+              // 替换其他位置的[object Object]
+              code = code.replace(/\[object Object\]/g, '{}');
+            }
+            return `"originCode": "${code}"`;
+          })
+          // 处理JavaScript表达式，保持为字符串而不执行
+          .replace(/:\s*([^",}\]]+\([^)]*\)[^",}\]]*)/g, ': "$1"')
+          // 修复可能的语法错误
+          .replace(/,(\s*[}\]])/g, '$1') // 移除尾随逗号
+          .replace(/,\s*,/g, ','); // 移除重复逗号
+        return JSON.parse(jsFixedContent);
+      },
+      
+      // 7. 宽松的JSON5解析（处理更多边缘情况）
       () => {
         let relaxedContent = cleanContent
           .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":') // 为属性名添加引号
           .replace(/:\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*([,}])/g, ': "$1"$2') // 为字符串值添加引号
           .replace(/,(\s*[}\]])/g, '$1'); // 移除尾随逗号
         return JSON5.parse(relaxedContent);
+      },
+      
+      // 8. jsonrepair + 移除注释的组合解析
+      () => {
+        const withoutComments = cleanContent
+          .replace(/\/\*[\s\S]*?\*\//g, '') // 移除块注释
+          .replace(/\/\/.*$/gm, ''); // 移除行注释
+        const repairedJson = jsonrepair(withoutComments);
+        return JSON.parse(repairedJson);
       }
     ];
 
@@ -785,6 +1117,15 @@ ${docsContent}
      console.error('🚨 Schema解析完全失败');
      console.error('📄 原始内容 (前200字符):', content.substring(0, 200));
      console.error('🧹 清理后内容 (前200字符):', cleanContent.substring(0, 200));
+     
+     // 尝试使用jsonrepair修复并显示修复结果
+     try {
+       const repairedJson = jsonrepair(cleanContent);
+       console.error('🔧 jsonrepair修复后内容 (前200字符):', repairedJson.substring(0, 200));
+     } catch (repairError) {
+       console.error('🔧 jsonrepair修复失败:', repairError.message);
+     }
+     
      console.error('💥 最后一个错误:', lastError?.message);
      
      // 提供更有用的错误信息
