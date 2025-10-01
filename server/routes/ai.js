@@ -35,6 +35,39 @@ async function writeDetailedLog(logType, data) {
 }
 
 /**
+ * 写入生成的schema到专门的日志文件
+ */
+async function writeSchemaLog(prompt, schema, metadata = {}) {
+  try {
+    const now = new Date();
+    const schemaLogFileName = `generated_schemas.log`; // 专门的schema日志文件
+    const schemaLogFilePath = path.join(logsDir, schemaLogFileName);
+    
+    const schemaLogData = {
+      timestamp: now.toISOString(),
+      prompt: prompt,
+      schema: schema,
+      metadata: {
+        schemaSize: schema ? JSON.stringify(schema).length : 0,
+        componentCount: schema && schema.children ? schema.children.length : 0,
+        hasDataSource: !!(schema && schema.dataSource),
+        hasState: !!(schema && schema.state && Object.keys(schema.state).length > 0),
+        hasMethods: !!(schema && schema.methods && Object.keys(schema.methods).length > 0),
+        hasLifeCycles: !!(schema && schema.lifeCycles && Object.keys(schema.lifeCycles).length > 0),
+        hasOriginCode: !!(schema && schema.originCode),
+        ...metadata
+      }
+    };
+    
+    const schemaLogLine = JSON.stringify(schemaLogData, null, 2) + '\n' + '---SCHEMA_SEPARATOR---\n';
+    await fs.promises.appendFile(schemaLogFilePath, schemaLogLine, 'utf8');
+    console.log(`📋 Schema日志已记录: ${prompt.substring(0, 50)}... (大小: ${schemaLogData.metadata.schemaSize} 字符)`);
+  } catch (error) {
+    console.error('❌ 写入Schema日志文件失败:', error.message);
+  }
+}
+
+/**
  * 生成低代码schema接口
  * POST /api/ai/generate-schema
  */
@@ -62,6 +95,15 @@ router.post('/generate-schema', async (req, res) => {
 
     // 调用Silicon Flow服务生成schema
     const schema = await siliconFlowService.generateSchema(prompt, context);
+
+    // 记录生成的schema到专门的日志文件
+    if (schema) {
+      await writeSchemaLog(prompt, schema, {
+        materials: materials || [],
+        generationMethod: 'silicon_flow',
+        hasCurrentSchema: !!currentSchema
+      });
+    }
 
     // 返回成功响应
     res.json({
@@ -219,6 +261,16 @@ router.post('/generate-schema-with-materials', async (req, res) => {
     const serviceStartTime = Date.now();
     const result = await materialSelectionService.generateSchemaWithMaterialSelection(prompt);
     const serviceDuration = Date.now() - serviceStartTime;
+
+    // 记录生成的schema到专门的日志文件
+    if (result.schema) {
+      await writeSchemaLog(prompt, result.schema, {
+        selectedMaterials: result.selectedMaterials?.map(m => m.name) || [],
+        iterations: result.iterations,
+        serviceDuration: serviceDuration,
+        generationMethod: 'material_selection'
+      });
+    }
 
     // 构建响应数据
     const responseData = {

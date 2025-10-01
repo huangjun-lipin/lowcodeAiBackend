@@ -714,6 +714,14 @@ ${docsContent}
 
 **目标：生成的页面应该是一个功能完整、交互流畅的原型，用户只需要将模拟数据替换为真实接口调用即可投入使用。**
 
+🚨 **重要格式要求：**
+1. **JSFunction类型格式**：必须严格使用 "type": "JSFunction"，不能有任何多余空格
+2. **JSExpression类型格式**：必须严格使用 "type": "JSExpression"，不能有任何多余空格
+3. **参考正确格式**：请严格按照以下示例格式生成：
+   - 正确：{"type": "JSFunction", "value": "function() {}"}
+   - 错误：{"type": " JSFunction", "value": "function() {}"}
+   - 错误：{"type": "JSFunction ", "value": "function() {}"}
+
 🚨 **输出格式要求：必须严格按照以下JSON格式输出完整的schema，不允许省略任何字段：**
 
 {
@@ -1046,6 +1054,15 @@ ${docsContent}
           .replace(/,\s*\[object Object\]/g, ', {}')
           // 处理数组中的[object Object]
           .replace(/\[\s*\[object Object\](?:\s*,\s*\[object Object\])*\s*\]/g, '[{}]')
+          // 修复JSFunction类型前面的空格问题 - 增强版本
+          .replace(/"type":\s*"\s*JSFunction\s*"/g, '"type": "JSFunction"')
+          .replace(/"type":\s*'\s*JSFunction\s*'/g, '"type": "JSFunction"')
+          // 修复JSExpression类型的空格问题
+          .replace(/"type":\s*"\s*JSExpression\s*"/g, '"type": "JSExpression"')
+          .replace(/"type":\s*'\s*JSExpression\s*'/g, '"type": "JSExpression"')
+          // 额外修复：处理type值开头有空格的情况
+          .replace(/"type":\s*"\s+JSFunction"/g, '"type": "JSFunction"')
+          .replace(/"type":\s*"\s+JSExpression"/g, '"type": "JSExpression"')
           // 处理originCode字段中的[object Object]问题
           .replace(/"originCode":\s*"[^"]*\[object Object\][^"]*"/g, (match) => {
             // 提取originCode的值并修复其中的[object Object]
