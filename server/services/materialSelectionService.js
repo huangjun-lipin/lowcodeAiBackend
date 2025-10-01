@@ -203,9 +203,36 @@ class MaterialSelectionService {
    * 构建物料选择的系统提示词
    */
   buildMaterialSelectionPrompt(availableMaterials) {
-    const materialList = availableMaterials.map(m => 
-      `- ${m.name} (${m.library}): ${m.hasSource ? '有源码' : '仅配置'}`
-    ).join('\n');
+    // 构建增强的物料列表，包含snippets信息
+    const materialList = availableMaterials.map(m => {
+      let materialInfo = `- ${m.name} (${m.library}): ${m.hasSource ? '有源码' : '仅配置'}`;
+      
+      // 如果有snippets信息，添加到物料描述中
+      const materialData = this.materialCache.get(`${m.library}:${m.name}`);
+      if (materialData && materialData.snippetsContent) {
+        try {
+          // 尝试解析snippets内容，提取关键信息
+          const snippetsMatch = materialData.snippetsContent.match(/title:\s*['"`]([^'"`]+)['"`]/g);
+          if (snippetsMatch && snippetsMatch.length > 0) {
+            const titles = snippetsMatch.map(match => 
+              match.replace(/title:\s*['"`]([^'"`]+)['"`]/, '$1')
+            ).join(', ');
+            materialInfo += ` [示例: ${titles}]`;
+          }
+          
+          // 提取props信息作为参考
+          const propsMatch = materialData.snippetsContent.match(/props:\s*{([^}]+)}/);
+          if (propsMatch) {
+            const propsInfo = propsMatch[1].replace(/\s+/g, ' ').substring(0, 100);
+            materialInfo += ` [配置: ${propsInfo}...]`;
+          }
+        } catch (error) {
+          // 如果解析失败，忽略错误继续
+        }
+      }
+      
+      return materialInfo;
+    }).join('\n');
 
     console.log('📝 构建物料选择提示词:');
     console.log('📦 可用物料数量:', availableMaterials.length);
@@ -232,6 +259,17 @@ ${materialList}
    - 需要特殊的事件处理或生命周期管理
    - 用户明确提到"定制化"、"自定义"、"复杂"等关键词
 5. 只有在极其简单的静态展示需求时，才可以不获取源代码
+
+**重要：充分利用物料的snippets示例**
+6. **参考snippets中的示例配置**：每个物料都提供了最佳实践的配置示例，包括：
+   - 组件的基础属性配置
+   - 常用的数据结构格式
+   - 推荐的样式和交互设置
+7. **基于snippets生成初始化效果**：
+   - 使用snippets中的props配置作为组件初始化的基础
+   - 参考snippets中的dataSource结构来设计数据格式
+   - 借鉴snippets中的示例数据来生成真实的假数据
+   - 根据snippets的title了解组件的典型使用场景
 
 **重要要求 - 物料选择策略：**
 6. **completed字段判断标准**：
@@ -631,7 +669,8 @@ ${materialList}
           sourcesInfo += `Meta配置:\n${sourceData.meta.substring(0, 1000)}...\n`;
         }
         if (sourceData.snippets) {
-          sourcesInfo += `Snippets示例:\n${sourceData.snippets.substring(0, 500)}...\n`;
+          sourcesInfo += `Snippets示例 (重要参考):\n${sourceData.snippets.substring(0, 800)}...\n`;
+          sourcesInfo += `💡 请特别关注snippets中的配置示例，这些是该物料的最佳实践配置\n`;
         }
         if (sourceData.source) {
           sourcesInfo += `源代码:\n`;
@@ -652,6 +691,17 @@ ${sourcesInfo}
 3. 优先使用fusion-ui组件，只有必要时才使用fusion-lowcode-materials
 4. 根据物料的实际能力和配置进行合理的属性设置
 5. 确保生成的代码可以正常运行
+
+**重要：充分利用snippets示例进行优化**
+6. **参考snippets最佳实践**：
+   - 使用snippets中展示的组件配置作为优化的参考标准
+   - 借鉴snippets中的props设置来完善组件属性
+   - 参考snippets中的数据结构来优化dataSource和state
+   - 根据snippets的使用场景来调整组件的交互逻辑
+7. **基于snippets生成真实效果**：
+   - 将snippets中的示例数据扩展为更丰富的假数据
+   - 根据snippets的配置模式来设计更完整的功能
+   - 参考snippets的组件组合方式来优化页面布局
 
 **重要要求 - 必须包含假数据和交互功能：**
 6. **数据要求**：必须为所有组件提供真实的假数据，包括：
