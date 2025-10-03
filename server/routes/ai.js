@@ -217,6 +217,254 @@ router.get('/status', (req, res) => {
 });
 
 /**
+ * 流式生成低代码schema接口 (Server-Sent Events)
+ * POST /api/ai/generate-schema-stream
+ */
+// 添加测试流式输出的路由
+router.post('/test-stream', async (req, res) => {
+  try {
+    // 设置SSE响应头
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+
+    // 发送开始事件
+    res.write(`data: ${JSON.stringify({
+      type: 'start',
+      message: '开始生成页面...',
+      timestamp: Date.now()
+    })}\n\n`);
+
+    // 模拟逐字符输出
+    const testMessage = "这是一个测试的逐字符流式输出，用来验证前端是否能正确显示逐字符效果。";
+    let currentMessage = "";
+    
+    for (let i = 0; i < testMessage.length; i++) {
+      currentMessage += testMessage[i];
+      
+      // 发送进度事件
+      res.write(`data: ${JSON.stringify({
+        type: 'progress',
+        message: currentMessage,
+        timestamp: Date.now()
+      })}\n\n`);
+      
+      // 延迟100ms模拟真实的流式输出
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // 发送完成事件
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      success: true,
+      message: '测试完成',
+      schema: { test: true },
+      timestamp: Date.now()
+    })}\n\n`);
+
+    res.end();
+
+  } catch (error) {
+    console.error('测试流式输出失败:', error);
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      message: error.message,
+      timestamp: Date.now()
+    })}\n\n`);
+    res.end();
+  }
+});
+
+router.post('/generate-schema-stream', async (req, res) => {
+  try {
+    const { prompt, currentSchema, materials } = req.body;
+
+    // 验证请求参数
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: '请求参数错误：prompt不能为空',
+        error: 'INVALID_PROMPT'
+      });
+    }
+
+    // 设置SSE响应头
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+
+    // 发送开始事件
+    res.write(`data: ${JSON.stringify({
+      type: 'start',
+      message: '开始生成页面...',
+      timestamp: Date.now()
+    })}\n\n`);
+
+    // 记录请求日志
+    console.log(`[AI Schema Generation Stream] 收到请求: ${prompt.substring(0, 100)}${prompt.length > 100 ? '...' : ''}`);
+
+    // 构建上下文
+    const context = {
+      currentSchema,
+      materials: materials || siliconFlowService.getAvailableMaterials()
+    };
+
+    // 调用Silicon Flow服务生成schema (流式版本)
+    const schema = await siliconFlowService.generateSchemaStream(prompt, context, (progressEvent) => {
+      // 转发进度事件到前端
+      res.write(`data: ${JSON.stringify(progressEvent)}\n\n`);
+    });
+
+    // 记录生成的schema到专门的日志文件
+    if (schema) {
+      await writeSchemaLog(prompt, schema, {
+        materials: materials || [],
+        generationMethod: 'silicon_flow_stream',
+        hasCurrentSchema: !!currentSchema
+      });
+    }
+
+    // 发送最终结果
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      success: true,
+      message: `已根据您的需求"${prompt}"生成页面结构`,
+      schema: schema,
+      timestamp: Date.now()
+    })}\n\n`);
+
+    // 记录成功日志
+    console.log(`[AI Schema Generation Stream] 成功生成schema，组件: ${schema.componentName}`);
+
+    // 结束流
+    res.write(`data: ${JSON.stringify({ type: 'end' })}\n\n`);
+    res.end();
+
+  } catch (error) {
+    console.error('[AI Schema Generation Stream] 生成失败:', error);
+
+    // 发送错误事件
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      success: false,
+      message: error.message || '生成失败，请稍后重试',
+      error: error.name || 'GENERATION_ERROR',
+      timestamp: Date.now()
+    })}\n\n`);
+
+    res.write(`data: ${JSON.stringify({ type: 'end' })}\n\n`);
+    res.end();
+  }
+});
+
+/**
+ * 流式智能物料选择和schema生成接口 (Server-Sent Events)
+ * POST /api/ai/generate-schema-with-materials-stream
+ */
+router.post('/generate-schema-with-materials-stream', async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    const requestStartTime = Date.now();
+
+    // 验证请求参数
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: '请求参数错误：prompt不能为空',
+        error: 'INVALID_PROMPT'
+      });
+    }
+
+    // 设置SSE响应头
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+
+    // 发送开始事件
+    res.write(`data: ${JSON.stringify({
+      type: 'start',
+      message: '开始智能物料选择和页面生成...',
+      timestamp: Date.now()
+    })}\n\n`);
+
+    // 记录请求日志
+    console.log(`[AI Material Selection Stream] 收到请求: ${prompt.substring(0, 100)}${prompt.length > 100 ? '...' : ''}`);
+
+    // 发送进度事件
+    res.write(`data: ${JSON.stringify({
+      type: 'progress',
+      message: '正在分析需求并选择物料...',
+      timestamp: Date.now()
+    })}\n\n`);
+
+    // 调用物料选择服务生成schema，并传递流式回调
+    const serviceStartTime = Date.now();
+    const result = await materialSelectionService.generateSchemaWithMaterialSelectionStream(prompt, (progressData) => {
+      // 发送迭代进度事件
+      res.write(`data: ${JSON.stringify({
+        type: 'iteration',
+        ...progressData,
+        timestamp: Date.now()
+      })}\n\n`);
+    });
+    const serviceDuration = Date.now() - serviceStartTime;
+
+    // 记录生成的schema到专门的日志文件
+    if (result.schema) {
+      await writeSchemaLog(prompt, result.schema, {
+        selectedMaterials: result.selectedMaterials?.map(m => m.name) || [],
+        iterations: result.iterations,
+        serviceDuration: serviceDuration,
+        generationMethod: 'material_selection_stream'
+      });
+    }
+
+    // 发送最终结果
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      success: true,
+      message: `已根据您的需求"${prompt}"智能选择物料并生成页面结构`,
+      result: result,
+      timestamp: Date.now()
+    })}\n\n`);
+
+    // 记录成功日志
+    console.log(`[AI Material Selection Stream] 成功生成schema，迭代次数: ${result.iterations}, 选择物料: ${result.selectedMaterials.map(m => m.name).join(', ')}`);
+
+    // 结束流
+    res.write(`data: ${JSON.stringify({ type: 'end' })}\n\n`);
+    res.end();
+
+  } catch (error) {
+    console.error('[AI Material Selection Stream] 生成失败:', error);
+
+    // 发送错误事件
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      success: false,
+      message: error.message || '智能物料选择和schema生成失败，请稍后重试',
+      error: error.name || 'MATERIAL_SELECTION_ERROR',
+      timestamp: Date.now()
+    })}\n\n`);
+
+    res.write(`data: ${JSON.stringify({ type: 'end' })}\n\n`);
+    res.end();
+  }
+});
+
+/**
  * 智能物料选择和schema生成接口
  * POST /api/ai/generate-schema-with-materials
  */

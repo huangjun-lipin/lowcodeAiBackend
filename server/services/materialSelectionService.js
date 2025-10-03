@@ -28,6 +28,99 @@ class MaterialSelectionService {
   }
 
   /**
+   * 调用Silicon Flow API (流式版本)
+   */
+  async callSiliconFlowAPIStream(messages, onProgress) {
+    const requestData = {
+      model: 'deepseek-ai/DeepSeek-V3',
+      messages: messages,
+      temperature: 0.7,
+      max_tokens: 46384,
+      stream: true // 启用流式输出
+    };
+    
+    const requestConfig = {
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 3000000,
+      responseType: 'stream'
+    };
+
+    console.log('🚀 [Silicon Flow API Stream] 发送流式请求');
+
+    const response = await axios.post(`${this.baseURL}/v1/chat/completions`, requestData, requestConfig);
+
+    let fullContent = '';
+    let buffer = '';
+
+    return new Promise((resolve, reject) => {
+      response.data.on('data', (chunk) => {
+        buffer += chunk.toString();
+        
+        // 处理SSE数据格式
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // 保留不完整的行
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            
+            if (data === '[DONE]') {
+              continue;
+            }
+            
+            try {
+              const jsonData = JSON.parse(data);
+              if (jsonData.choices && jsonData.choices[0] && jsonData.choices[0].delta) {
+                const content = jsonData.choices[0].delta.content;
+                if (content) {
+                  fullContent += content;
+                  
+                  // 发送逐字符进度回调
+                  if (onProgress) {
+                    onProgress({
+                      type: 'stream',
+                      content: fullContent,
+                      timestamp: Date.now()
+                    });
+                  }
+                }
+              }
+            } catch (parseError) {
+              // 忽略JSON解析错误，继续处理下一行
+            }
+          }
+        }
+      });
+
+      response.data.on('end', () => {
+        resolve(fullContent);
+      });
+
+      response.data.on('error', (error) => {
+        console.error('🚨 流式响应错误:', error);
+        reject(error);
+      });
+    });
+  }
+
+  /**
+   * 标准化物料名称：将PascalCase转换为kebab-case
+   */
+  normalizeMaterialName(materialName) {
+    if (!materialName) return materialName;
+    
+    // 将PascalCase转换为kebab-case
+    // 例如: ProTable -> pro-table, DatePicker -> date-picker
+    return materialName
+      .replace(/([A-Z])/g, '-$1')  // 在大写字母前添加连字符
+      .toLowerCase()               // 转换为小写
+      .replace(/^-/, '');          // 移除开头的连字符
+  }
+
+  /**
    * 写入详细日志到统一文件
    */
   async writeDetailedLog(logType, data) {
@@ -58,9 +151,16 @@ class MaterialSelectionService {
    */
   async initializeMaterialCache() {
     try {
+      // 先加载fusion-ui，再加载fusion-lowcode-materials
+      // 这样fusion-ui的物料会优先被缓存
       await this.loadMaterialsFromPath('fusion-ui', this.materialPaths.fusionUI);
       await this.loadMaterialsFromPath('fusion-lowcode-materials', this.materialPaths.fusionLowcodeMaterials);
       console.log(`物料缓存初始化完成，共加载 ${this.materialCache.size} 个物料`);
+      
+      // 输出物料库统计信息
+      const fusionUICount = Array.from(this.materialCache.values()).filter(m => m.library === 'fusion-ui').length;
+      const fusionLowcodeCount = Array.from(this.materialCache.values()).filter(m => m.library === 'fusion-lowcode-materials').length;
+      console.log(`📊 物料统计: fusion-ui(${fusionUICount}个), fusion-lowcode-materials(${fusionLowcodeCount}个)`);
     } catch (error) {
       console.error('物料缓存初始化失败:', error);
     }
@@ -148,14 +248,30 @@ class MaterialSelectionService {
   getAvailableMaterials() {
     const materials = [];
     
+    // 先添加fusion-ui的物料，确保优先级
     for (const [key, material] of this.materialCache) {
-      materials.push({
-        name: material.name,
-        library: material.library,
-        path: material.path,
-        hasSource: material.hasSource,
-        key: key
-      });
+      if (material.library === 'fusion-ui') {
+        materials.push({
+          name: material.name,
+          library: material.library,
+          path: material.path,
+          hasSource: material.hasSource,
+          key: key
+        });
+      }
+    }
+    
+    // 再添加其他库的物料
+    for (const [key, material] of this.materialCache) {
+      if (material.library !== 'fusion-ui') {
+        materials.push({
+          name: material.name,
+          library: material.library,
+          path: material.path,
+          hasSource: material.hasSource,
+          key: key
+        });
+      }
     }
 
     return materials;
@@ -249,11 +365,22 @@ class MaterialSelectionService {
 可用物料列表：
 ${materialList}
 
-选择原则：
-1. 优先选择fusion-ui中的组件，它们更加现代化和功能完整
-2. 只有在fusion-ui中没有合适组件时，才考虑fusion-lowcode-materials
-3. **强烈建议获取源代码**：为了实现更好的定制化效果，应该积极获取物料源代码
-4. 以下情况**必须**获取源代码：
+**🚨 重要选择原则（严格执行）：**
+1. **严禁使用fusion-lowcode-materials中的任何组件** - 这些组件已过时且不稳定
+2. **必须优先且仅使用fusion-ui中的组件** - 它们更加现代化、功能完整且经过充分测试
+3. **如果fusion-ui中没有完全匹配的组件，选择最接近的组件进行定制**
+4. **常用组件映射关系**：
+   - 表单相关：使用 pro-form（完整表单解决方案）
+   - 输入框：使用 input（支持各种输入类型）
+   - 按钮：使用 pro-form 内置的按钮功能
+   - 表格：使用 pro-table（功能强大的表格组件）
+   - 对话框：使用 pro-dialog
+   - 抽屉：使用 pro-drawer
+   - 日期选择：使用 date-picker、month-picker、year-picker等
+   - 下拉选择：使用 select、cascader-select、tree-select等
+
+5. **强烈建议获取源代码**：为了实现更好的定制化效果，应该积极获取物料源代码
+6. 以下情况**必须**获取源代码：
    - 需要自定义样式或交互逻辑
    - 需要复杂的数据处理或状态管理
    - 需要特殊的事件处理或生命周期管理
@@ -569,7 +696,7 @@ ${materialList}
   /**
    * 迭代优化schema
    */
-  async optimizeSchema(userPrompt, currentSchema, materialSources, iterationCount = 0) {
+  async optimizeSchema(userPrompt, currentSchema, materialSources, iterationCount = 0, progressCallback = null) {
     const maxIterations = 10; // 最大迭代次数
     
     console.log(`🔧 [Schema Optimization] 开始第 ${iterationCount + 1} 次优化迭代`);
@@ -626,7 +753,30 @@ ${materialList}
     console.log('📏 系统提示词长度:', systemPrompt.length);
 
     try {
-      const response = await this.callSiliconFlowAPI(messages);
+      let response;
+      
+      // 如果有进度回调，使用流式API
+      if (progressCallback) {
+        console.log('🌊 使用流式API进行优化...');
+        
+        // 发送流式进度回调
+        const streamProgressCallback = (streamData) => {
+          if (streamData.type === 'stream' && streamData.content) {
+            progressCallback({
+              iterationNumber: iterationCount + 1,
+              message: streamData.content,
+              completed: false,
+              streaming: true
+            });
+          }
+        };
+        
+        response = await this.callSiliconFlowAPIStream(messages, streamProgressCallback);
+      } else {
+        console.log('📞 使用标准API进行优化...');
+        response = await this.callSiliconFlowAPI(messages);
+      }
+      
       console.log('📥 收到优化响应，开始解析...');
       
       const result = this.parseOptimizationResponse(response);
@@ -958,6 +1108,211 @@ ${sourcesInfo}
     }
     
     return cleaned;
+  }
+
+  /**
+   * 完整的物料选择和schema生成流程 (流式版本)
+   */
+  async generateSchemaWithMaterialSelectionStream(userPrompt, progressCallback) {
+    try {
+      console.log('🚀 [Material Selection Stream] 开始智能物料选择和schema生成流程');
+      console.log('📝 用户需求:', userPrompt);
+      
+      // 发送开始进度
+      progressCallback({
+        iterationNumber: 0,
+        message: '开始分析需求...',
+        completed: false
+      });
+      
+      // 记录初始请求参数
+      await this.writeDetailedLog('material_selection_request_stream', {
+        userPrompt,
+        timestamp: new Date().toISOString(),
+        step: 'initial_request'
+      });
+      
+      // 1. 获取可用物料
+      const availableMaterials = this.getAvailableMaterials();
+      console.log('📦 可用物料总数:', availableMaterials.length);
+      
+      progressCallback({
+        iterationNumber: 0,
+        message: `发现 ${availableMaterials.length} 个可用物料`,
+        completed: false
+      });
+      
+      // 2. 智能选择物料
+      console.log('🎯 开始智能物料选择...');
+      progressCallback({
+        iterationNumber: 0,
+        message: '正在智能选择物料...',
+        completed: false
+      });
+      
+      const selectionResult = await this.selectMaterials(userPrompt, availableMaterials);
+      console.log('✅ 物料选择完成:', JSON.stringify({
+        selectedCount: selectionResult.selectedMaterials?.length || 0,
+        materials: selectionResult.selectedMaterials?.map(m => ({
+          name: m.name || m,
+          library: m.library,
+          needSourceCode: m.needSourceCode
+        })),
+        completed: selectionResult.completed,
+        hasInitialSchema: !!selectionResult.initialSchema
+      }, null, 2));
+      
+      progressCallback({
+        iterationNumber: 0,
+        message: `已选择 ${selectionResult.selectedMaterials?.length || 0} 个物料`,
+        completed: false,
+        selectedMaterials: selectionResult.selectedMaterials
+      });
+      
+      // 3. 如果可以直接完成，返回结果
+      if (selectionResult.completed && selectionResult.initialSchema) {
+        console.log('🎉 直接完成，无需迭代优化');
+        
+        progressCallback({
+          iterationNumber: 1,
+          message: '页面生成完成',
+          completed: true,
+          hasSchema: true,
+          schemaSize: JSON.stringify(selectionResult.initialSchema).length
+        });
+        
+        const finalResult = {
+          completed: true,
+          schema: selectionResult.initialSchema,
+          selectedMaterials: selectionResult.selectedMaterials,
+          iterations: 0,
+          iterationHistory: []
+        };
+        
+        return finalResult;
+      }
+      
+      // 4. 获取需要的物料源代码
+      console.log('📚 开始获取物料源代码...');
+      progressCallback({
+        iterationNumber: 0,
+        message: '正在获取物料源代码...',
+        completed: false
+      });
+      
+      const materialSources = {};
+      const materialsNeedingSource = selectionResult.selectedMaterials || [];
+      
+      for (const material of materialsNeedingSource) {
+        const materialName = material.name || material;
+        const materialLibrary = material.library;
+        
+        // 物料名称转换：将PascalCase转换为kebab-case
+        const normalizedMaterialName = this.normalizeMaterialName(materialName);
+        
+        try {
+          const sourceCode = await this.getMaterialSourceCode(normalizedMaterialName, materialLibrary);
+          if (sourceCode) {
+            materialSources[materialName] = sourceCode; // 使用原始名称作为key
+            console.log(`✅ 获取物料源代码成功: ${materialName} -> ${normalizedMaterialName}`);
+          } else {
+            console.warn(`⚠️ 未找到物料源代码: ${materialName} -> ${normalizedMaterialName}`);
+          }
+        } catch (error) {
+          console.error(`❌ 获取物料源代码失败: ${materialName}`, error);
+        }
+      }
+      
+      progressCallback({
+        iterationNumber: 0,
+        message: `已获取 ${Object.keys(materialSources).length} 个物料的源代码`,
+        completed: false
+      });
+      
+      // 5. 迭代优化schema
+      console.log('🔄 开始迭代优化schema...');
+      let currentSchema = selectionResult.initialSchema || null;
+      let iterationCount = 0;
+      const maxIterations = 3;
+      const iterationHistory = [];
+      
+      while (iterationCount < maxIterations) {
+        iterationCount++;
+        console.log(`🔄 开始第 ${iterationCount} 次迭代优化...`);
+        
+        progressCallback({
+          iterationNumber: iterationCount,
+          message: `第 ${iterationCount} 次迭代优化中...`,
+          completed: false
+        });
+        
+        const optimizationResult = await this.optimizeSchema(
+          userPrompt,
+          currentSchema,
+          materialSources,
+          iterationCount - 1, // 传递从0开始的迭代计数
+          progressCallback // 传递progressCallback以支持流式输出
+        );
+        
+        const iterationData = {
+          iterationNumber: iterationCount,
+          completed: optimizationResult.completed,
+          hasSchema: !!optimizationResult.schema,
+          schemaSize: optimizationResult.schema ? JSON.stringify(optimizationResult.schema).length : 0,
+          reasoning: optimizationResult.reason
+        };
+        
+        iterationHistory.push(iterationData);
+        
+        progressCallback({
+          ...iterationData,
+          message: `第 ${iterationCount} 次迭代${optimizationResult.completed ? '完成' : '进行中'}`
+        });
+        
+        if (optimizationResult.completed) {
+          currentSchema = optimizationResult.schema;
+          console.log(`✅ 第 ${iterationCount} 次迭代完成，停止优化`);
+          break;
+        }
+        
+        if (optimizationResult.schema) {
+          currentSchema = optimizationResult.schema;
+          console.log(`🔄 第 ${iterationCount} 次迭代完成，继续优化...`);
+        }
+      }
+      
+      // 6. 返回最终结果
+      const finalResult = {
+        completed: true,
+        schema: currentSchema,
+        selectedMaterials: selectionResult.selectedMaterials,
+        iterations: iterationCount,
+        iterationHistory: iterationHistory
+      };
+      
+      progressCallback({
+        iterationNumber: iterationCount,
+        message: '所有迭代完成，页面生成成功',
+        completed: true,
+        hasSchema: !!currentSchema,
+        schemaSize: currentSchema ? JSON.stringify(currentSchema).length : 0
+      });
+      
+      console.log('🎉 [Material Selection Stream] 流程完成');
+      return finalResult;
+      
+    } catch (error) {
+      console.error('❌ [Material Selection Stream] 流程失败:', error);
+      
+      progressCallback({
+        iterationNumber: 0,
+        message: `生成失败: ${error.message}`,
+        completed: false,
+        error: true
+      });
+      
+      throw error;
+    }
   }
 
   /**

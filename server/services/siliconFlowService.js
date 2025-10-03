@@ -747,7 +747,179 @@ ${docsContent}
   }
 
   /**
-   * 调用DeepSeek API生成schema
+   * 调用DeepSeek API生成schema (流式版本)
+   * @param {string} userPrompt 用户输入的需求描述
+   * @param {object} context 上下文信息（可选）
+   * @param {function} onProgress 进度回调函数（可选）
+   * @returns {Promise<object>} 生成的schema
+   */
+  async generateSchemaStream(userPrompt, context = {}, onProgress = null) {
+    try {
+      // 记录API调用开始时间
+      const apiStartTime = Date.now();
+      console.log('🚀 开始调用大模型API (流式)...');
+      
+      const messages = [
+        {
+          role: 'system',
+          content: this.getSystemPrompt()
+        },
+        {
+          role: 'user',
+          content: userPrompt
+        }
+      ];
+
+      // 如果有上下文信息，添加到消息中
+      if (context.currentSchema) {
+        messages.splice(1, 0, {
+          role: 'user',
+          content: `当前页面已有的schema结构：${JSON.stringify(context.currentSchema, null, 2)}`
+        });
+      }
+
+      const requestData = {
+        model: 'deepseek-ai/DeepSeek-V3',
+        messages: messages,
+        temperature: 0.3,
+        max_tokens: 32000,
+        stream: true // 启用流式输出
+      };
+
+      // 发送进度回调
+      if (onProgress) {
+        onProgress({
+          type: 'progress',
+          message: '正在连接AI服务...',
+          timestamp: Date.now()
+        });
+      }
+
+      console.log('🚀 [Silicon Flow API - generateSchemaStream] 发送流式请求');
+
+      const response = await this.client.post('/v1/chat/completions', requestData, {
+        ...this.defaultConfig,
+        responseType: 'stream'
+      });
+
+      let fullContent = '';
+      let buffer = '';
+
+      // 发送进度回调
+      if (onProgress) {
+        onProgress({
+          type: 'progress',
+          message: '开始接收AI回答...',
+          timestamp: Date.now()
+        });
+      }
+
+      return new Promise((resolve, reject) => {
+        response.data.on('data', (chunk) => {
+          buffer += chunk.toString();
+          
+          // 处理SSE数据格式
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // 保留不完整的行
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              
+              if (data === '[DONE]') {
+                // 流式传输结束
+                console.log('📥 [Silicon Flow API] 流式传输完成');
+                
+                try {
+                  // 解析完整内容
+                  const parsedResult = this.parseComplexSchema(fullContent);
+                  let schema;
+                  
+                  if (parsedResult.componentsTree && Array.isArray(parsedResult.componentsTree) && parsedResult.componentsTree.length > 0) {
+                    schema = parsedResult.componentsTree[0];
+                  } else if (parsedResult.componentName) {
+                    schema = parsedResult;
+                  } else {
+                    schema = parsedResult;
+                  }
+
+                  // 确保有ID
+                  if (schema && typeof schema === 'object' && !schema.id) {
+                    schema.id = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                  }
+
+                  console.log('✅ Schema生成完成');
+                  resolve(schema);
+                } catch (parseError) {
+                  console.error('🚨 Schema解析失败:', parseError);
+                  reject(parseError);
+                }
+                return;
+              }
+              
+              try {
+                const jsonData = JSON.parse(data);
+                if (jsonData.choices && jsonData.choices[0] && jsonData.choices[0].delta && jsonData.choices[0].delta.content) {
+                  const content = jsonData.choices[0].delta.content;
+                  fullContent += content;
+                  
+                  // 发送逐字符进度回调 - 发送累积的完整内容以实现逐字符显示
+                  if (onProgress) {
+                    onProgress({
+                      type: 'progress',
+                      message: fullContent, // 发送累积内容，前端会直接替换显示
+                      timestamp: Date.now()
+                    });
+                  }
+                }
+              } catch (parseError) {
+                // 忽略JSON解析错误，继续处理下一行
+              }
+            }
+          }
+        });
+
+        response.data.on('end', () => {
+          if (fullContent) {
+            try {
+              const parsedResult = this.parseComplexSchema(fullContent);
+              let schema;
+              
+              if (parsedResult.componentsTree && Array.isArray(parsedResult.componentsTree) && parsedResult.componentsTree.length > 0) {
+                schema = parsedResult.componentsTree[0];
+              } else if (parsedResult.componentName) {
+                schema = parsedResult;
+              } else {
+                schema = parsedResult;
+              }
+
+              if (schema && typeof schema === 'object' && !schema.id) {
+                schema.id = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              }
+
+              resolve(schema);
+            } catch (parseError) {
+              reject(parseError);
+            }
+          } else {
+            reject(new Error('没有接收到有效的响应内容'));
+          }
+        });
+
+        response.data.on('error', (error) => {
+          console.error('🚨 流式响应错误:', error);
+          reject(error);
+        });
+      });
+
+    } catch (error) {
+      console.error('🚨 Silicon Flow API调用失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 调用DeepSeek API生成schema (非流式版本，保持向后兼容)
    * @param {string} userPrompt 用户输入的需求描述
    * @param {object} context 上下文信息（可选）
    * @returns {Promise<object>} 生成的schema
@@ -934,11 +1106,10 @@ ${docsContent}
     try {
       const materialsDir = path.join(__dirname, '..', 'materials');
       const fusionUIDir = path.join(materialsDir, 'fusion-ui');
-      const fusionLowcodeDir = path.join(materialsDir, 'fusion-lowcode-materials');
       
       const components = [];
       
-      // 读取fusion-ui目录下的组件
+      // 优先读取fusion-ui目录下的组件
       if (fs.existsSync(fusionUIDir)) {
         const fusionUIFiles = fs.readdirSync(fusionUIDir).filter(file => file.endsWith('.md'));
         fusionUIFiles.forEach(file => {
@@ -951,44 +1122,45 @@ ${docsContent}
         });
       }
       
-      // 读取fusion-lowcode-materials目录下的组件
-      if (fs.existsSync(fusionLowcodeDir)) {
-        const fusionLowcodeFiles = fs.readdirSync(fusionLowcodeDir).filter(file => file.endsWith('.md'));
-        fusionLowcodeFiles.forEach(file => {
-          const componentName = file.replace('.md', '');
-          components.push({
-            name: componentName,
-            category: 'fusion-lowcode-materials',
-            file: file
-          });
-        });
-      }
+      // 注释掉fusion-lowcode-materials的读取，确保只使用fusion-ui组件
+      // const fusionLowcodeDir = path.join(materialsDir, 'fusion-lowcode-materials');
+      // if (fs.existsSync(fusionLowcodeDir)) {
+      //   const fusionLowcodeFiles = fs.readdirSync(fusionLowcodeDir).filter(file => file.endsWith('.md'));
+      //   fusionLowcodeFiles.forEach(file => {
+      //     const componentName = file.replace('.md', '');
+      //     components.push({
+      //       name: componentName,
+      //       category: 'fusion-lowcode-materials',
+      //       file: file
+      //     });
+      //   });
+      // }
       
       return components;
     } catch (error) {
       console.error('获取组件列表失败:', error);
-      // 返回默认组件列表作为备用
+      // 返回fusion-ui默认组件列表作为备用
       return [
-        'NextButton',
-        'NextInput',
-        'NextForm',
-        'NextFormItem',
-        'NextTable',
-        'NextDialog',
-        'NextSelect',
-        'NextDatePicker',
-        'NextCheckbox',
-        'NextRadio',
-        'NextSwitch',
-        'NextUpload',
-        'NextCard',
-        'NextTabs',
-        'NextCollapse',
-        'NextBreadcrumb',
-        'NextPagination',
-        'NextRow',
-        'NextCol',
-        'NextBox'
+        'button',
+        'input',
+        'pro-form',
+        'form-item',
+        'pro-table',
+        'dialog',
+        'select',
+        'date-picker',
+        'checkbox',
+        'radio',
+        'switch',
+        'upload',
+        'card',
+        'tab',
+        'collapse',
+        'breadcrumb',
+        'pagination',
+        'row',
+        'col',
+        'box'
       ];
     }
   }
@@ -1166,7 +1338,7 @@ ${docsContent}
    */
   async healthCheck() {
     try {
-      const response = await this.client.get('/v1/models');
+      const response = await this.client.get('/v1/models', this.defaultConfig);
       return response.status === 200;
     } catch (error) {
       console.error('DeepSeek API健康检查失败:', error.message);
