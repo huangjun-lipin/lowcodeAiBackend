@@ -147,6 +147,41 @@ class MaterialSelectionService {
   }
 
   /**
+   * 记录完整提示语到专门的日志文件
+   */
+  async writeCompletePromptLog(userPrompt, messages, iterationCount) {
+    try {
+      const timestamp = new Date().toISOString();
+      const promptLogEntry = {
+        timestamp,
+        userPrompt,
+        iterationCount,
+        messages: messages.map((msg, index) => ({
+          index,
+          role: msg.role,
+          contentLength: msg.content.length,
+          contentPreview: msg.content.substring(0, 200) + (msg.content.length > 200 ? '...' : ''),
+          fullContent: msg.content // 完整内容
+        })),
+        totalMessages: messages.length,
+        totalPromptLength: messages.reduce((sum, msg) => sum + msg.content.length, 0)
+      };
+      
+      // 专门的完整提示语日志文件
+      const promptLogFileName = `complete_prompts.log`;
+      const promptLogFilePath = path.join(this.logsDir, promptLogFileName);
+      
+      // 使用分隔符便于查看
+      const logLine = JSON.stringify(promptLogEntry, null, 2) + '\n' + '---PROMPT_SEPARATOR---\n';
+      await fs.promises.appendFile(promptLogFilePath, logLine, 'utf8');
+      
+      console.log(`📋 完整提示语已记录: 用户需求="${userPrompt.substring(0, 50)}..." 迭代=${iterationCount} 消息数=${messages.length} 总长度=${promptLogEntry.totalPromptLength}`);
+    } catch (error) {
+      console.error('❌ 写入完整提示语日志文件失败:', error.message);
+    }
+  }
+
+  /**
    * 初始化物料缓存
    */
   async initializeMaterialCache() {
@@ -368,16 +403,36 @@ ${materialList}
 **🚨 重要选择原则（严格执行）：**
 1. **严禁使用fusion-lowcode-materials中的任何组件** - 这些组件已过时且不稳定
 2. **必须优先且仅使用fusion-ui中的组件** - 它们更加现代化、功能完整且经过充分测试
-3. **如果fusion-ui中没有完全匹配的组件，选择最接近的组件进行定制**
+3. **严格使用正确的组件名称，禁止使用不存在的组件**
+
+**🔥 fusion-ui中可用的组件列表（严格限制，不得使用其他组件）：**
+- **表格类**: ProTable, ProTableSlot
+- **表单类**: ProForm, StepForm, ChildForm, AnchorForm  
+- **表单控件**: FormSelect, FormDatePicker, FormRangePicker, FormNumberPicker, FormCheckboxGroup, FormRadioGroup, FormCascaderSelect, FormTreeSelect, FormUpload, FormRating
+- **日期选择**: MonthPicker, WeekPicker, YearPicker
+- **图表类**: AreaChart, BarChart, ColumnChart, DonutChart, LineChart, PieChart
+- **布局类**: PageHeader, TabContainer, Drawer
+- **设置器**: ExpressionSetter, NumberSetter, ObjectSetter, RadioGroupSetter
+- **其他**: Anchor, FilterItem, ProDialog, StoryPlaceholder
+
+**❌ 严禁使用以下不存在的组件名称：**
+- Column（不存在，应使用ProTable的columns配置）
+- Input（不存在，应使用FormSelect或其他Form控件）
+- Select（不存在，应使用FormSelect）
+- DatePicker（不存在，应使用FormDatePicker）
+- DateRangePicker（不存在，应使用FormRangePicker）
+- Button（不存在，应使用ProForm内置按钮或操作配置）
+- Table（不存在，应使用ProTable）
+
 4. **常用组件映射关系**：
-   - 表单相关：使用 pro-form（完整表单解决方案）
-   - 输入框：使用 input（支持各种输入类型）
-   - 按钮：使用 pro-form 内置的按钮功能
-   - 表格：使用 pro-table（功能强大的表格组件）
-   - 对话框：使用 pro-dialog
-   - 抽屉：使用 pro-drawer
-   - 日期选择：使用 date-picker、month-picker、year-picker等
-   - 下拉选择：使用 select、cascader-select、tree-select等
+   - 表单相关：使用 ProForm（完整表单解决方案）
+   - 输入框：使用 FormSelect 或其他 Form 控件
+   - 按钮：使用 ProForm 内置的按钮功能
+   - 表格：使用 ProTable（功能强大的表格组件）
+   - 对话框：使用 ProDialog
+   - 抽屉：使用 Drawer
+   - 日期选择：使用 FormDatePicker、MonthPicker、YearPicker等
+   - 下拉选择：使用 FormSelect、FormCascaderSelect、FormTreeSelect等
 
 5. **强烈建议获取源代码**：为了实现更好的定制化效果，应该积极获取物料源代码
 6. 以下情况**必须**获取源代码：
@@ -432,6 +487,87 @@ ${materialList}
      ]
    }
    \`\`\`
+
+🚨 **JSFunction使用规范 - 防止this上下文丢失错误**
+
+**重要：为了避免 "TypeError: __self.fetchData is not a function" 等this上下文丢失错误，必须严格遵守以下规范：**
+
+### 1. JSFunction定义规范
+- **方法定义**：在methods中定义的JSFunction必须使用正确的this绑定
+- **生命周期**：在lifeCycles中定义的JSFunction必须正确处理this上下文
+- **事件处理**：在组件属性中引用方法时，必须使用JSExpression + 方法引用模式
+
+### 2. 正确的this绑定模式
+
+**✅ 正确示例 - 方法定义：**
+"methods": {
+  "fetchData": {
+    "type": "JSFunction",
+    "value": "function fetchData() { console.log('获取数据', this.state); }"
+  },
+  "handleSearch": {
+    "type": "JSFunction", 
+    "value": "function handleSearch(values) { this.setState({ filterParams: values }); this.fetchData(); }"
+  }
+}
+
+**✅ 正确示例 - 事件绑定（推荐使用JSExpression）：**
+"onChange": {
+  "type": "JSExpression",
+  "value": "this.handleSearch"
+}
+
+**✅ 正确示例 - Column render函数：**
+"render": {
+  "type": "JSFunction", 
+  "value": "function(text, record) { return this.renderActionColumn(text, record); }.bind(this)"
+}
+
+**✅ 正确示例 - 内联render函数（如必须使用）：**
+"render": {
+  "type": "JSFunction",
+  "value": "function(text, record) { return this.formatPrice ? this.formatPrice(text) : text; }.bind(this)"
+}
+
+### 3. 避免的错误模式
+
+**❌ 错误示例 - 直接JSFunction引用：**
+"onChange": {
+  "type": "JSFunction",
+  "value": "function() { this.handleSearch(); }"  // this上下文可能丢失
+}
+
+**❌ 错误示例 - 未绑定this的render：**
+"render": {
+  "type": "JSFunction", 
+  "value": "function(text) { return this.formatPrice(text); }"  // this上下文丢失
+}
+
+### 4. setState回调规范
+
+**✅ 正确的setState使用：**
+"handleSubmit": {
+  "type": "JSFunction",
+  "value": "function handleSubmit(values) { this.setState({ formData: values }, () => { this.fetchData(); }); }"
+}
+
+### 5. 组件事件绑定检查清单
+
+在生成schema时，请检查以下项目：
+- [ ] 所有methods中的JSFunction都正确使用了this
+- [ ] 组件的onChange、onClick等事件使用JSExpression引用方法
+- [ ] render函数必须使用JSFunction类型，不能使用JSExpression
+- [ ] 如使用内联JSFunction，确保正确绑定this
+- [ ] setState回调中的方法调用正确使用this
+- [ ] 生命周期方法中的this调用正确
+
+### 6. 常见错误预防
+
+**防止 "TypeError: __self.fetchData is not a function"：**
+1. 确保fetchData在methods中正确定义
+2. 调用fetchData时使用 this.fetchData()
+3. 在事件绑定中使用JSExpression而非JSFunction
+4. 检查所有方法调用都有正确的this前缀
 
 9. **数据绑定正确格式**：
    - 错误：{{state.filterParams.name}}
@@ -752,6 +888,9 @@ ${materialList}
     console.log('📝 消息数量:', messages.length);
     console.log('📏 系统提示词长度:', systemPrompt.length);
 
+    // 记录完整提示语到专门的日志文件
+    await this.writeCompletePromptLog(userPrompt, messages, iterationCount);
+
     try {
       let response;
       
@@ -838,7 +977,7 @@ ${sourcesInfo}
 优化原则：
 1. 渐进式优化：在现有schema基础上进行小幅改进，不要轻易推翻整体结构
 2. 保持一致性：确保schema中的dataSource、state、lifeCycles、methods与originCode保持一致
-3. 优先使用fusion-ui组件，只有必要时才使用fusion-lowcode-materials
+3. 必须仅使用fusion-ui组件，严禁使用fusion-lowcode-materials中的任何组件
 4. 根据物料的实际能力和配置进行合理的属性设置
 5. 确保生成的代码可以正常运行
 
@@ -871,6 +1010,11 @@ ${sourcesInfo}
    - 添加lifeCycles字段处理生命周期
 
 **关键格式要求 - 避免常见错误：**
+8. **componentName必须固定为"Page"**：
+   - 所有生成的schema中componentName字段必须设置为"Page"
+   - 不能使用"LowcodeComponent"或其他值
+   - 示例：\`"componentName": "Page"\`
+
 9. **dataSource正确理解**：
    - dataSource是声明接口请求的配置，不是用来存储数据的
    - 正确格式：
@@ -896,6 +1040,87 @@ ${sourcesInfo}
      ]
    }
    \`\`\`
+
+🚨 **JSFunction使用规范 - 防止this上下文丢失错误**
+
+**重要：为了避免 "TypeError: __self.fetchData is not a function" 等this上下文丢失错误，必须严格遵守以下规范：**
+
+### 1. JSFunction定义规范
+- **方法定义**：在methods中定义的JSFunction必须使用正确的this绑定
+- **生命周期**：在lifeCycles中定义的JSFunction必须正确处理this上下文
+- **事件处理**：在组件属性中引用方法时，必须使用JSExpression + 方法引用模式
+
+### 2. 正确的this绑定模式
+
+**✅ 正确示例 - 方法定义：**
+"methods": {
+  "fetchData": {
+    "type": "JSFunction",
+    "value": "function fetchData() { console.log('获取数据', this.state); }"
+  },
+  "handleSearch": {
+    "type": "JSFunction", 
+    "value": "function handleSearch(values) { this.setState({ filterParams: values }); this.fetchData(); }"
+  }
+}
+
+**✅ 正确示例 - 事件绑定（推荐使用JSExpression）：**
+"onChange": {
+  "type": "JSExpression",
+  "value": "this.handleSearch"
+}
+
+**✅ 正确示例 -  Column render函数：**
+"render": {
+  "type": "JSFunction", 
+  "value": "function(text, record) { return this.renderActionColumn(text, record); }.bind(this)"
+}
+
+**✅ 正确示例 - 内联render函数（如必须使用）：**
+"render": {
+  "type": "JSFunction",
+  "value": "function(text, record) { return this.formatPrice ? this.formatPrice(text) : text; }.bind(this)"
+}
+
+### 3. 避免的错误模式
+
+**❌ 错误示例 - 直接JSFunction引用：**
+"onChange": {
+  "type": "JSFunction",
+  "value": "function() { this.handleSearch(); }"  // this上下文可能丢失
+}
+
+**❌ 错误示例 - 未绑定this的render：**
+"render": {
+  "type": "JSFunction", 
+  "value": "function(text) { return this.formatPrice(text); }"  // this上下文丢失
+}
+
+### 4. setState回调规范
+
+**✅ 正确的setState使用：**
+"handleSubmit": {
+  "type": "JSFunction",
+  "value": "function handleSubmit(values) { this.setState({ formData: values }, () => { this.fetchData(); }); }"
+}
+
+### 5. 组件事件绑定检查清单
+
+在生成schema时，请检查以下项目：
+- [ ] 所有methods中的JSFunction都正确使用了this
+- [ ] 组件的onChange、onClick等事件使用JSExpression引用方法
+- [ ] render函数必须使用JSFunction类型，不能使用JSExpression
+- [ ] 如使用内联JSFunction，确保正确绑定this
+- [ ] setState回调中的方法调用正确使用this
+- [ ] 生命周期方法中的this调用正确
+
+### 6. 常见错误预防
+
+**防止 "TypeError: __self.fetchData is not a function"：**
+1. 确保fetchData在methods中正确定义
+2. 调用fetchData时使用 this.fetchData()
+3. 在事件绑定中使用JSExpression而非JSFunction
+4. 检查所有方法调用都有正确的this前缀
 
 10. **数据绑定正确格式**：
     - 错误：{{state.filterParams.name}}
@@ -960,7 +1185,10 @@ ${sourcesInfo}
     try {
       const result = JSON.parse(response);
       console.log('✅ 解析器 1 成功: 直接JSON解析');
-      return result;
+      
+      // 验证和保护originCode字段
+      const validatedResult = this.validateAndProtectOriginCode(result);
+      return validatedResult;
     } catch (error) {
       console.log('❌ 解析器 1 失败:', error.message);
       lastError = error;
@@ -972,7 +1200,10 @@ ${sourcesInfo}
       if (jsonMatch) {
         const result = JSON.parse(jsonMatch[1]);
         console.log('✅ 解析器 2 成功: JSON代码块提取');
-        return result;
+        
+        // 验证和保护originCode字段
+        const validatedResult = this.validateAndProtectOriginCode(result);
+        return validatedResult;
       }
     } catch (error) {
       console.log('❌ 解析器 2 失败:', error.message);
@@ -985,7 +1216,10 @@ ${sourcesInfo}
       if (braceMatch) {
         const result = JSON.parse(braceMatch[0]);
         console.log('✅ 解析器 3 成功: 大括号内容提取');
-        return result;
+        
+        // 验证和保护originCode字段
+        const validatedResult = this.validateAndProtectOriginCode(result);
+        return validatedResult;
       }
     } catch (error) {
       console.log('❌ 解析器 3 失败:', error.message);
@@ -997,7 +1231,10 @@ ${sourcesInfo}
       const repairedJson = jsonrepair(response);
       const result = JSON.parse(repairedJson);
       console.log('✅ 解析器 4 成功: jsonrepair修复');
-      return result;
+      
+      // 验证和保护originCode字段
+      const validatedResult = this.validateAndProtectOriginCode(result);
+      return validatedResult;
     } catch (error) {
       console.log('❌ 解析器 4 失败:', error.message);
       lastError = error;
@@ -1009,7 +1246,10 @@ ${sourcesInfo}
       console.log('🧹 清理后的响应:', cleanedResponse);
       const result = JSON5.parse(cleanedResponse);
       console.log('✅ 解析器 5 成功: JSON5直接解析');
-      return result;
+      
+      // 验证和保护originCode字段
+      const validatedResult = this.validateAndProtectOriginCode(result);
+      return validatedResult;
     } catch (error) {
       console.log('❌ 解析器 5 失败:', error.message);
       lastError = error;
@@ -1019,6 +1259,92 @@ ${sourcesInfo}
     console.log('💥 最后一个错误:', lastError.message);
     console.error('解析优化响应失败:', lastError);
     throw new Error('无法解析优化响应');
+  }
+
+  /**
+   * 验证和保护originCode字段
+   * 确保schema中包含完整的originCode
+   */
+  validateAndProtectOriginCode(result) {
+    console.log('🔍 开始验证和保护originCode字段...');
+    
+    if (!result || typeof result !== 'object') {
+      console.warn('⚠️ 结果不是有效对象，跳过originCode验证');
+      return result;
+    }
+
+    // 检查是否有schema字段
+    if (!result.schema) {
+      console.warn('⚠️ 结果中没有schema字段，跳过originCode验证');
+      return result;
+    }
+
+    const schema = result.schema;
+    
+    // 检查originCode是否存在且有效
+    if (!schema.originCode || typeof schema.originCode !== 'string' || schema.originCode.trim() === '') {
+      console.warn('⚠️ originCode缺失或无效，开始生成...');
+      
+      // 生成originCode
+      const generatedOriginCode = this.generateOriginCodeFromSchema(schema);
+      if (generatedOriginCode) {
+        schema.originCode = generatedOriginCode;
+        console.log('✅ 成功生成originCode，长度:', generatedOriginCode.length);
+      } else {
+        console.error('❌ 无法生成originCode');
+      }
+    } else {
+      console.log('✅ originCode字段验证通过，长度:', schema.originCode.length);
+    }
+
+    return result;
+  }
+
+  /**
+   * 从schema生成originCode
+   */
+  generateOriginCodeFromSchema(schema) {
+    console.log('🔧 开始从schema生成originCode...');
+    
+    try {
+      const state = schema.state || {};
+      const methods = schema.methods || {};
+      const lifeCycles = schema.lifeCycles || {};
+      
+      // 构建state字符串
+      const stateStr = JSON.stringify(state, null, 2)
+        .replace(/"type":\s*"JSExpression",\s*"value":\s*"([^"]+)"/g, '$1')
+        .replace(/"/g, '\\"');
+      
+      // 构建方法字符串
+      let methodsStr = '';
+      for (const [methodName, methodConfig] of Object.entries(methods)) {
+        if (methodConfig && methodConfig.type === 'JSFunction' && methodConfig.value) {
+          // 提取函数体
+          const functionBody = methodConfig.value.replace(/^function\s*\w*\s*\([^)]*\)\s*\{/, '').replace(/\}$/, '');
+          methodsStr += `  ${methodName}() {\n    ${functionBody.trim()}\n  }\n`;
+        }
+      }
+      
+      // 构建生命周期字符串
+      let lifeCyclesStr = '';
+      for (const [lifeCycleName, lifeCycleConfig] of Object.entries(lifeCycles)) {
+        if (lifeCycleConfig && lifeCycleConfig.type === 'JSFunction' && lifeCycleConfig.value) {
+          // 提取函数体
+          const functionBody = lifeCycleConfig.value.replace(/^function\s*\w*\s*\([^)]*\)\s*\{/, '').replace(/\}$/, '');
+          lifeCyclesStr += `  ${lifeCycleName}() {\n    ${functionBody.trim()}\n  }\n`;
+        }
+      }
+      
+      // 组装完整的originCode
+      const originCode = `class LowcodeComponent extends Component {\\n  state = ${stateStr}\\n${lifeCyclesStr}${methodsStr}}`;
+      
+      console.log('✅ originCode生成完成');
+      return originCode;
+    } catch (error) {
+      console.error('❌ 生成originCode失败:', error);
+      return null;
+    }
   }
 
   /**

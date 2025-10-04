@@ -25,6 +25,12 @@ class SiliconFlowService {
       timeout: 900000, // 900秒超时（15分钟）
     };
 
+    // 初始化日志目录
+    this.logsDir = path.join(__dirname, '../logs');
+    if (!fs.existsSync(this.logsDir)) {
+      fs.mkdirSync(this.logsDir, { recursive: true });
+    }
+
     // 初始化JSON Schema验证器
     this.ajv = new Ajv({ allErrors: true });
     this.schemaValidator = this.ajv.compile({
@@ -286,8 +292,27 @@ class SiliconFlowService {
 ## 🚨 重要：物料包使用规范
 **必须严格遵守以下物料使用优先级：**
 1. **优先使用fusion-ui物料包**：必须优先使用fusion-ui物料包中的组件，这些组件经过充分测试和优化
-2. **严禁使用fusion-lowcode-materials**：严格禁止使用fusion-lowcode-materials包中的物料，除非fusion-ui组件包中确实没有对应功能的组件才可考虑
+2. **严禁使用fusion-lowcode-materials**：严格禁止使用fusion-lowcode-materials包中的任何物料，必须仅使用fusion-ui组件包中的组件
 3. **组件选择原则**：在生成schema时，务必从fusion-ui文档中选择合适的组件，确保组件名称和属性配置的准确性
+
+**🔥 fusion-ui中可用的组件列表（严格限制，不得使用其他组件）：**
+- **表格类**: ProTable, ProTableSlot
+- **表单类**: ProForm, StepForm, ChildForm, AnchorForm
+- **表单控件**: FormSelect, FormDatePicker, FormRangePicker, FormNumberPicker, FormCheckboxGroup, FormRadioGroup, FormCascaderSelect, FormTreeSelect, FormUpload, FormRating
+- **日期选择**: MonthPicker, WeekPicker, YearPicker
+- **图表类**: AreaChart, BarChart, ColumnChart, DonutChart, LineChart, PieChart
+- **布局类**: PageHeader, TabContainer, Drawer
+- **设置器**: ExpressionSetter, NumberSetter, ObjectSetter, RadioGroupSetter
+- **其他**: Anchor, FilterItem, ProDialog, StoryPlaceholder
+
+**❌ 严禁使用以下不存在的组件名称：**
+- Column（不存在，应使用ProTable的columns配置）
+- Input（不存在，应使用FormSelect或其他Form控件）
+- Select（不存在，应使用FormSelect）
+- DatePicker（不存在，应使用FormDatePicker）
+- DateRangePicker（不存在，应使用FormRangePicker）
+- Button（不存在，应使用ProForm内置按钮或操作配置）
+- Table（不存在，应使用ProTable）
 
 以下是完整的组件文档，包含每个组件的详细属性配置、使用方法和示例：
 
@@ -617,6 +642,7 @@ ${docsContent}
 
 重要注意事项：
 1. **完整性要求**：必须包含所有字段：componentName、id、props、fileName、dataSource、state、css、lifeCycles、methods、originCode、children等
+   - **componentName必须固定为"Page"**，不能使用其他值如"LowcodeComponent"
 2. **数据源定义**：dataSource.list数组中定义页面需要的接口调用，包含完整的请求配置
 3. **状态管理**：state字段定义页面绑定的变量，格式为 {"变量名": {"type": "JSExpression", "value": "初始值"}}
 4. **生命周期**：lifeCycles定义组件的生命周期函数，如componentDidMount、componentWillUnmount等
@@ -624,7 +650,7 @@ ${docsContent}
 6. **代码一致性**：originCode中的JavaScript代码必须与state、lifeCycles、methods中定义的内容完全对应
 7. **组件规范**：
    - **优先使用Fusion UI物料包**：必须优先使用fusion-ui物料包中的组件，这些组件经过充分测试和优化
-   - **严禁使用fusion-lowcode-materials**：严格禁止使用fusion-lowcode-materials包中的物料，除非fusion-ui组件包中确实没有对应功能的组件才可考虑
+   - **严禁使用fusion-lowcode-materials**：严格禁止使用fusion-lowcode-materials包中的任何物料，必须仅使用fusion-ui组件包中的组件
    - **组件名称准确性**：子组件必须使用文档中定义的准确组件名称和属性
 8. **ID唯一性**：每个组件必须有唯一的id，格式如 "node_" + 时间戳 + 随机字符
 9. **布局优先**：对于布局类需求，优先使用NextRow和NextCol进行栅格布局
@@ -742,6 +768,87 @@ ${docsContent}
   "conditionGroup": "",
   "children": []
 }
+
+🚨 **JSFunction使用规范 - 防止this上下文丢失错误**
+
+**重要：为了避免 "TypeError: __self.fetchData is not a function" 等this上下文丢失错误，必须严格遵守以下规范：**
+
+### 1. JSFunction定义规范
+- **方法定义**：在methods中定义的JSFunction必须使用正确的this绑定
+- **生命周期**：在lifeCycles中定义的JSFunction必须正确处理this上下文
+- **事件处理**：在组件属性中引用方法时，必须使用JSExpression + 方法引用模式
+
+### 2. 正确的this绑定模式
+
+**✅ 正确示例 - 方法定义：**
+"methods": {
+  "fetchData": {
+    "type": "JSFunction",
+    "value": "function fetchData() { console.log('获取数据', this.state); }"
+  },
+  "handleSearch": {
+    "type": "JSFunction", 
+    "value": "function handleSearch(values) { this.setState({ filterParams: values }); this.fetchData(); }"
+  }
+}
+
+**✅ 正确示例 - 事件绑定（推荐使用JSExpression）：**
+"onChange": {
+  "type": "JSExpression",
+  "value": "this.handleSearch"
+}
+
+**✅ 正确示例 - Column render函数：**
+"render": {
+  "type": "JSFunction", 
+  "value": "function(text, record) { return this.renderActionColumn(text, record); }.bind(this)"
+}
+
+**✅ 正确示例 - 内联render函数（如必须使用）：**
+"render": {
+  "type": "JSFunction",
+  "value": "function(text, record) { return this.formatPrice ? this.formatPrice(text) : text; }.bind(this)"
+}
+
+### 3. 避免的错误模式
+
+**❌ 错误示例 - 直接JSFunction引用：**
+"onChange": {
+  "type": "JSFunction",
+  "value": "function() { this.handleSearch(); }"  // this上下文可能丢失
+}
+
+**❌ 错误示例 - 未绑定this的render：**
+"render": {
+  "type": "JSFunction", 
+  "value": "function(text) { return this.formatPrice(text); }"  // this上下文丢失
+}
+
+### 4. setState回调规范
+
+**✅ 正确的setState使用：**
+"handleSubmit": {
+  "type": "JSFunction",
+  "value": "function handleSubmit(values) { this.setState({ formData: values }, () => { this.fetchData(); }); }"
+}
+
+### 5. 组件事件绑定检查清单
+
+在生成schema时，请检查以下项目：
+- [ ] 所有methods中的JSFunction都正确使用了this
+- [ ] 组件的onChange、onClick等事件使用JSExpression引用方法
+- [ ] render函数必须使用JSFunction类型，不能使用JSExpression
+- [ ] 如使用内联JSFunction，确保正确绑定this
+- [ ] setState回调中的方法调用正确使用this
+- [ ] 生命周期方法中的this调用正确
+
+### 6. 常见错误预防
+
+**防止 "TypeError: __self.fetchData is not a function"：**
+1. 确保fetchData在methods中正确定义
+2. 调用fetchData时使用 this.fetchData()
+3. 在事件绑定中使用JSExpression而非JSFunction
+4. 检查所有方法调用都有正确的this前缀
 
 现在请根据用户需求生成对应的完整页面schema。`;
   }
@@ -979,6 +1086,9 @@ ${docsContent}
           'Authorization': `Bearer ${this.apiKey.substring(0, 10)}...`
         }
       }, null, 2));
+
+      // 记录完整提示语到专门的日志文件
+      await this.writeCompletePromptLog(userPrompt, messages, 'generateSchema');
 
       const response = await this.client.post('/v1/chat/completions', requestData, this.defaultConfig);
 
@@ -1407,6 +1517,41 @@ ${docsContent}
       valid: errors.length === 0,
       errors
     };
+  }
+
+  /**
+   * 记录完整提示语到专门的日志文件
+   */
+  async writeCompletePromptLog(userPrompt, messages, method) {
+    try {
+      const timestamp = new Date().toISOString();
+      const promptLogEntry = {
+        timestamp,
+        userPrompt,
+        method,
+        messages: messages.map((msg, index) => ({
+          index,
+          role: msg.role,
+          contentLength: msg.content.length,
+          contentPreview: msg.content.substring(0, 200) + (msg.content.length > 200 ? '...' : ''),
+          fullContent: msg.content // 完整内容
+        })),
+        totalMessages: messages.length,
+        totalPromptLength: messages.reduce((sum, msg) => sum + msg.content.length, 0)
+      };
+      
+      // 专门的完整提示语日志文件
+      const promptLogFileName = `complete_prompts_silicon_flow.log`;
+      const promptLogFilePath = path.join(this.logsDir, promptLogFileName);
+      
+      // 使用分隔符便于查看
+      const logLine = JSON.stringify(promptLogEntry, null, 2) + '\n' + '---PROMPT_SEPARATOR---\n';
+      await fs.promises.appendFile(promptLogFilePath, logLine, 'utf8');
+      
+      console.log(`📋 完整提示语已记录(SiliconFlow): 用户需求="${userPrompt.substring(0, 50)}..." 方法=${method} 消息数=${messages.length} 总长度=${promptLogEntry.totalPromptLength}`);
+    } catch (error) {
+      console.error('❌ 写入完整提示语日志文件失败:', error.message);
+    }
   }
 }
 
