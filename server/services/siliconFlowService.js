@@ -31,6 +31,15 @@ class SiliconFlowService {
       fs.mkdirSync(this.logsDir, { recursive: true });
     }
 
+    // 添加物料源码缓存
+    this.sourceCodeCache = new Map();
+    
+    // 初始化物料路径
+    this.materialPaths = {
+      fusionUI: path.join(__dirname, '..', 'materials', 'fusion-ui'),
+      fusionLowcodeMaterials: path.join(__dirname, '..', 'materials', 'fusion-lowcode-materials')
+    };
+
     // 初始化JSON Schema验证器
     this.ajv = new Ajv({ allErrors: true });
     this.schemaValidator = this.ajv.compile({
@@ -163,6 +172,51 @@ class SiliconFlowService {
   /**
    * 读取所有组件文档内容
    */
+  /**
+   * 查找物料源码文件
+   * @param {string} componentName 组件名称
+   * @param {string} libraryName 物料库名称
+   * @returns {string|null} 源码文件路径
+   */
+  findSourceCodeFile(componentName, libraryName) {
+    try {
+      const materialsDir = path.join(__dirname, '..', 'materials');
+      const libraryDir = path.join(materialsDir, libraryName);
+      
+      // 可能的源码文件路径
+      const possiblePaths = [
+        path.join(libraryDir, 'src', `${componentName}.js`),
+        path.join(libraryDir, 'src', `${componentName}.jsx`),
+        path.join(libraryDir, 'src', `${componentName}.ts`),
+        path.join(libraryDir, 'src', `${componentName}.tsx`),
+        path.join(libraryDir, 'src', componentName, 'index.js'),
+        path.join(libraryDir, 'src', componentName, 'index.jsx'),
+        path.join(libraryDir, 'src', componentName, 'index.ts'),
+        path.join(libraryDir, 'src', componentName, 'index.tsx'),
+        path.join(libraryDir, 'src', componentName, `${componentName}.js`),
+        path.join(libraryDir, 'src', componentName, `${componentName}.jsx`),
+        path.join(libraryDir, 'src', componentName, `${componentName}.ts`),
+        path.join(libraryDir, 'src', componentName, `${componentName}.tsx`),
+        path.join(libraryDir, `${componentName}.js`),
+        path.join(libraryDir, `${componentName}.jsx`),
+        path.join(libraryDir, `${componentName}.ts`),
+        path.join(libraryDir, `${componentName}.tsx`)
+      ];
+      
+      // 查找第一个存在的文件
+      for (const filePath of possiblePaths) {
+        if (fs.existsSync(filePath)) {
+          return filePath;
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      console.error(`查找 ${componentName} 源码文件失败:`, error);
+      return null;
+    }
+  }
+
   readAllDocsContent() {
     try {
       const materialsDir = path.join(__dirname, '..', 'materials');
@@ -171,27 +225,55 @@ class SiliconFlowService {
       
       let allDocsContent = '';
       
-      // 读取fusion-ui目录下的文档
+      // 读取fusion-ui目录下的文档和源码
       if (fs.existsSync(fusionUIDir)) {
         const fusionUIFiles = fs.readdirSync(fusionUIDir).filter(file => file.endsWith('.md'));
-        allDocsContent += '\n## Fusion UI 组件文档\n\n';
+        allDocsContent += '\n## Fusion UI 组件文档和源码\n\n';
         
         fusionUIFiles.forEach(file => {
           const filePath = path.join(fusionUIDir, file);
           const content = fs.readFileSync(filePath, 'utf-8');
-          allDocsContent += `### ${file}\n\n${content}\n\n---\n\n`;
+          allDocsContent += `### ${file}\n\n${content}\n\n`;
+          
+          // 尝试读取对应的源码文件
+          const componentName = file.replace('.md', '');
+          const sourceCodePath = this.findSourceCodeFile(componentName, 'fusion-ui');
+          if (sourceCodePath) {
+            try {
+              const sourceCode = fs.readFileSync(sourceCodePath, 'utf-8');
+              allDocsContent += `#### ${componentName} 源码实现\n\n\`\`\`javascript\n${sourceCode}\n\`\`\`\n\n`;
+            } catch (sourceError) {
+              console.warn(`读取 ${componentName} 源码失败:`, sourceError.message);
+            }
+          }
+          
+          allDocsContent += '---\n\n';
         });
       }
       
-      // 读取fusion-lowcode-materials目录下的文档
+      // 读取fusion-lowcode-materials目录下的文档和源码
       if (fs.existsSync(fusionLowcodeDir)) {
         const fusionLowcodeFiles = fs.readdirSync(fusionLowcodeDir).filter(file => file.endsWith('.md'));
-        allDocsContent += '\n## Fusion Lowcode Materials 组件文档\n\n';
+        allDocsContent += '\n## Fusion Lowcode Materials 组件文档和源码\n\n';
         
         fusionLowcodeFiles.forEach(file => {
           const filePath = path.join(fusionLowcodeDir, file);
           const content = fs.readFileSync(filePath, 'utf-8');
-          allDocsContent += `### ${file}\n\n${content}\n\n---\n\n`;
+          allDocsContent += `### ${file}\n\n${content}\n\n`;
+          
+          // 尝试读取对应的源码文件
+          const componentName = file.replace('.md', '');
+          const sourceCodePath = this.findSourceCodeFile(componentName, 'fusion-lowcode-materials');
+          if (sourceCodePath) {
+            try {
+              const sourceCode = fs.readFileSync(sourceCodePath, 'utf-8');
+              allDocsContent += `#### ${componentName} 源码实现\n\n\`\`\`javascript\n${sourceCode}\n\`\`\`\n\n`;
+            } catch (sourceError) {
+              console.warn(`读取 ${componentName} 源码失败:`, sourceError.message);
+            }
+          }
+          
+          allDocsContent += '---\n\n';
         });
       }
       
@@ -1552,6 +1634,84 @@ ${docsContent}
     } catch (error) {
       console.error('❌ 写入完整提示语日志文件失败:', error.message);
     }
+  }
+
+  /**
+   * 获取物料源代码
+   */
+  async getMaterialSourceCode(materialName, libraryName) {
+    const materialKey = `${libraryName}:${materialName}`;
+    
+    // 检查源码缓存
+    if (this.sourceCodeCache.has(materialKey)) {
+      console.log(`📋 从缓存获取 ${materialName} 源代码`);
+      return this.sourceCodeCache.get(materialKey);
+    }
+
+    const sourceCode = {
+      meta: null,
+      snippets: null,
+      source: null
+    };
+
+    // 读取物料源代码文件
+    const basePath = libraryName === 'fusion-ui' 
+      ? this.materialPaths.fusionUI 
+      : this.materialPaths.fusionLowcodeMaterials;
+    
+    sourceCode.source = await this.readSourceFiles(basePath, materialName);
+
+    // 将结果缓存
+    this.sourceCodeCache.set(materialKey, sourceCode);
+    console.log(`💾 已缓存 ${materialName} 源代码`);
+
+    return sourceCode;
+  }
+
+  /**
+   * 读取物料源代码文件
+   */
+  async readSourceFiles(basePath, materialName) {
+    const srcPath = path.join(basePath, 'src');
+    const sourceFiles = {};
+
+    // 可能的源代码路径
+    const possiblePaths = [
+      path.join(srcPath, 'components', materialName),
+      path.join(srcPath, materialName),
+    ];
+
+    for (const dirPath of possiblePaths) {
+      if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+        const files = fs.readdirSync(dirPath);
+        
+        for (const file of files) {
+          if (file.endsWith('.tsx') || file.endsWith('.ts') || file.endsWith('.jsx') || file.endsWith('.js')) {
+            const filePath = path.join(dirPath, file);
+            sourceFiles[file] = fs.readFileSync(filePath, 'utf8');
+          }
+        }
+        break;
+      }
+    }
+
+    // 检查单文件组件
+    const singleFilePaths = [
+      path.join(srcPath, 'components', `${materialName}.tsx`),
+      path.join(srcPath, 'components', `${materialName}.ts`),
+      path.join(srcPath, `${materialName}.tsx`),
+      path.join(srcPath, `${materialName}.ts`)
+    ];
+
+    for (const filePath of singleFilePaths) {
+      if (fs.existsSync(filePath)) {
+        const fileName = path.basename(filePath);
+        sourceFiles[fileName] = fs.readFileSync(filePath, 'utf8');
+        break;
+      }
+    }
+
+    return sourceFiles;
   }
 }
 
