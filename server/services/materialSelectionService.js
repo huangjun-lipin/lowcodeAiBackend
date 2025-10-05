@@ -784,49 +784,219 @@ ${materialList}
   }
 
   /**
-   * 读取物料源代码文件
+   * 解析import路径为实际文件路径
+   * @param {string} importPath - import路径
+   * @param {string} baseDir - 基础目录
+   * @returns {string|null} 解析后的文件路径
    */
-  async readSourceFiles(basePath, materialName) {
-    const srcPath = path.join(basePath, 'src');
-    const sourceFiles = {};
-
-    // 可能的源代码路径
-    const possiblePaths = [
-      path.join(srcPath, 'components', materialName),
-      path.join(srcPath, materialName),
-    ];
-
-    for (const dirPath of possiblePaths) {
-      if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
-        const files = fs.readdirSync(dirPath);
-        
-        for (const file of files) {
-          if (file.endsWith('.tsx') || file.endsWith('.ts') || file.endsWith('.jsx') || file.endsWith('.js')) {
-            const filePath = path.join(dirPath, file);
-            sourceFiles[file] = fs.readFileSync(filePath, 'utf8');
-          }
-        }
-        break;
+  resolveImportPath(importPath, baseDir) {
+    // 处理相对路径
+    let resolvedPath = path.resolve(baseDir, importPath);
+    
+    // 尝试不同的文件扩展名
+    const extensions = ['.js', '.jsx', '.ts', '.tsx', '.json'];
+    
+    // 如果路径已经有扩展名，直接检查
+    if (path.extname(resolvedPath)) {
+      return fs.existsSync(resolvedPath) ? resolvedPath : null;
+    }
+    
+    // 尝试添加扩展名
+    for (const ext of extensions) {
+      const pathWithExt = resolvedPath + ext;
+      if (fs.existsSync(pathWithExt)) {
+        return pathWithExt;
       }
     }
+    
+    // 尝试index文件
+    for (const ext of extensions) {
+      const indexPath = path.join(resolvedPath, `index${ext}`);
+      if (fs.existsSync(indexPath)) {
+        return indexPath;
+      }
+    }
+    
+    return null;
+  }
 
-    // 检查单文件组件
-    const singleFilePaths = [
+  /**
+   * 解析文件中的依赖关系
+   * @param {string} fileContent - 文件内容
+   * @param {string} filePath - 文件路径
+   * @returns {Array} 依赖文件路径数组
+   */
+  parseDependencies(fileContent, filePath) {
+    const dependencies = [];
+    const fileDir = path.dirname(filePath);
+    
+    // 匹配各种import、export和require语句的正则表达式
+    const importPatterns = [
+      // ES6 import语句
+      /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)(?:\s*,\s*(?:\{[^}]*\}|\*\s+as\s+\w+|\w+))*\s+from\s+)?['"`]([^'"`]+)['"`]/g,
+      // ES6 export from语句
+      /export\s+(?:\{[^}]*\}|\*(?:\s+as\s+\w+)?)\s+from\s+['"`]([^'"`]+)['"`]/g,
+      // CommonJS require语句
+      /require\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g,
+      // 动态import
+      /import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g
+    ];
+    
+    importPatterns.forEach(pattern => {
+      let match;
+      while ((match = pattern.exec(fileContent)) !== null) {
+        const importPath = match[1];
+        
+        // 跳过node_modules和绝对路径的依赖
+        if (!importPath.startsWith('.') && !importPath.startsWith('/')) {
+          continue;
+        }
+        
+        // 解析相对路径
+        const resolvedPath = this.resolveImportPath(importPath, fileDir);
+        if (resolvedPath && fs.existsSync(resolvedPath)) {
+          dependencies.push(resolvedPath);
+        }
+      }
+    });
+    
+    return dependencies;
+  }
+
+  /**
+   * 递归加载文件及其所有依赖
+   * @param {string} filePath - 入口文件路径
+   * @param {Set} loadedFiles - 已加载文件集合（防止循环依赖）
+   * @param {string} libraryDir - 物料库目录
+   * @returns {Object} 文件内容映射
+   */
+  loadFileWithDependencies(filePath, loadedFiles = new Set(), libraryDir = '') {
+    const fileMap = {};
+    
+    // 防止循环依赖
+    if (loadedFiles.has(filePath)) {
+      return fileMap;
+    }
+    
+    try {
+      // 检查文件是否存在
+      if (!fs.existsSync(filePath)) {
+        console.warn(`文件不存在: ${filePath}`);
+        return fileMap;
+      }
+      
+      // 标记文件为已加载
+      loadedFiles.add(filePath);
+      
+      // 读取文件内容
+      const fileContent = fs.readFileSync(filePath, 'utf8');
+      const relativePath = libraryDir ? path.relative(libraryDir, filePath) : path.basename(filePath);
+      fileMap[relativePath] = fileContent;
+      
+      console.log(`📄 加载文件: ${relativePath}`);
+      
+      // 解析依赖
+      const dependencies = this.parseDependencies(fileContent, filePath);
+      
+      // 递归加载依赖文件
+      for (const depPath of dependencies) {
+        // 只加载物料库内的文件
+        if (libraryDir && !depPath.startsWith(libraryDir)) {
+          continue;
+        }
+        
+        const depFiles = this.loadFileWithDependencies(depPath, loadedFiles, libraryDir);
+        Object.assign(fileMap, depFiles);
+      }
+      
+    } catch (error) {
+      console.error(`加载文件失败 ${filePath}:`, error.message);
+    }
+    
+    return fileMap;
+  }
+
+  /**
+   * 查找组件的入口文件
+   * @param {string} basePath - 基础路径
+   * @param {string} materialName - 物料名称
+   * @returns {string|null} 入口文件路径
+   */
+  findComponentEntryFile(basePath, materialName) {
+    const srcPath = path.join(basePath, 'src');
+    
+    // 将组件名转换为kebab-case
+    const kebabCaseName = materialName
+      .replace(/([A-Z])/g, '-$1')
+      .toLowerCase()
+      .replace(/^-/, '');
+    
+    // 可能的入口文件路径
+    const possibleEntryPaths = [
+      // 直接在src目录下
+      path.join(srcPath, `${materialName}.tsx`),
+      path.join(srcPath, `${materialName}.ts`),
+      path.join(srcPath, `${kebabCaseName}.tsx`),
+      path.join(srcPath, `${kebabCaseName}.ts`),
+      
+      // 在components目录下
       path.join(srcPath, 'components', `${materialName}.tsx`),
       path.join(srcPath, 'components', `${materialName}.ts`),
-      path.join(srcPath, `${materialName}.tsx`),
-      path.join(srcPath, `${materialName}.ts`)
+      path.join(srcPath, 'components', `${kebabCaseName}.tsx`),
+      path.join(srcPath, 'components', `${kebabCaseName}.ts`),
+      
+      // 在组件名目录下的index文件
+      path.join(srcPath, 'components', materialName, 'index.tsx'),
+      path.join(srcPath, 'components', materialName, 'index.ts'),
+      path.join(srcPath, 'components', kebabCaseName, 'index.tsx'),
+      path.join(srcPath, 'components', kebabCaseName, 'index.ts'),
+      
+      // 在嵌套的components目录下
+      path.join(srcPath, 'components', materialName, 'components', 'index.tsx'),
+      path.join(srcPath, 'components', materialName, 'components', 'index.ts'),
+      path.join(srcPath, 'components', kebabCaseName, 'components', 'index.tsx'),
+      path.join(srcPath, 'components', kebabCaseName, 'components', 'index.ts'),
+      
+      // 直接在materialName目录下
+      path.join(srcPath, materialName, 'index.tsx'),
+      path.join(srcPath, materialName, 'index.ts'),
+      path.join(srcPath, kebabCaseName, 'index.tsx'),
+      path.join(srcPath, kebabCaseName, 'index.ts')
     ];
-
-    for (const filePath of singleFilePaths) {
-      if (fs.existsSync(filePath)) {
-        const fileName = path.basename(filePath);
-        sourceFiles[fileName] = fs.readFileSync(filePath, 'utf8');
-        break;
+    
+    for (const entryPath of possibleEntryPaths) {
+      if (fs.existsSync(entryPath)) {
+        console.log(`✅ 找到入口文件: ${entryPath}`);
+        return entryPath;
       }
     }
+    
+    console.warn(`⚠️ 未找到入口文件: ${materialName}`);
+    return null;
+  }
 
-    return sourceFiles;
+  /**
+   * 读取物料源代码文件（增强版，支持递归加载依赖）
+   */
+  async readSourceFiles(basePath, materialName) {
+    console.log(`🔍 开始读取物料源代码: ${materialName} (basePath: ${basePath})`);
+    
+    // 查找入口文件
+    const entryFilePath = this.findComponentEntryFile(basePath, materialName);
+    
+    if (!entryFilePath) {
+      console.warn(`⚠️ 未找到物料 ${materialName} 的入口文件`);
+      return {};
+    }
+    
+    // 使用递归加载方法加载所有相关文件
+    const libraryDir = basePath; // 使用basePath作为库目录限制
+    const allFiles = this.loadFileWithDependencies(entryFilePath, new Set(), libraryDir);
+    
+    console.log(`✅ 成功加载物料 ${materialName} 的 ${Object.keys(allFiles).length} 个文件`);
+    console.log(`📋 加载的文件列表:`, Object.keys(allFiles));
+    
+    return allFiles;
   }
 
   /**

@@ -173,46 +173,327 @@ class SiliconFlowService {
    * 读取所有组件文档内容
    */
   /**
-   * 查找物料源码文件
+   * 解析文件中的依赖关系
+   * @param {string} fileContent - 文件内容
+   * @param {string} filePath - 文件路径
+   * @returns {Array} 依赖文件路径数组
+   */
+  parseDependencies(fileContent, filePath) {
+    const dependencies = [];
+    const fileDir = path.dirname(filePath);
+    
+    // 匹配各种import、export和require语句的正则表达式
+    const importPatterns = [
+      // ES6 import语句
+      /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)(?:\s*,\s*(?:\{[^}]*\}|\*\s+as\s+\w+|\w+))*\s+from\s+)?['"`]([^'"`]+)['"`]/g,
+      // ES6 export from语句
+      /export\s+(?:\{[^}]*\}|\*(?:\s+as\s+\w+)?)\s+from\s+['"`]([^'"`]+)['"`]/g,
+      // CommonJS require语句
+      /require\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g,
+      // 动态import
+      /import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g
+    ];
+    
+    importPatterns.forEach(pattern => {
+      let match;
+      while ((match = pattern.exec(fileContent)) !== null) {
+        const importPath = match[1];
+        
+        // 跳过node_modules和绝对路径的依赖
+        if (!importPath.startsWith('.') && !importPath.startsWith('/')) {
+          continue;
+        }
+        
+        // 解析相对路径
+        const resolvedPath = this.resolveImportPath(importPath, fileDir);
+        if (resolvedPath && fs.existsSync(resolvedPath)) {
+          dependencies.push(resolvedPath);
+        }
+      }
+    });
+    
+    return dependencies;
+  }
+
+  /**
+   * 解析import路径为实际文件路径
+   * @param {string} importPath - import路径
+   * @param {string} baseDir - 基础目录
+   * @returns {string|null} 解析后的文件路径
+   */
+  resolveImportPath(importPath, baseDir) {
+    // 处理相对路径
+    let resolvedPath = path.resolve(baseDir, importPath);
+    
+    // 尝试不同的文件扩展名
+    const extensions = ['.js', '.jsx', '.ts', '.tsx', '.json'];
+    
+    // 如果路径已经有扩展名，直接检查
+    if (path.extname(resolvedPath)) {
+      return fs.existsSync(resolvedPath) ? resolvedPath : null;
+    }
+    
+    // 尝试添加扩展名
+    for (const ext of extensions) {
+      const pathWithExt = resolvedPath + ext;
+      if (fs.existsSync(pathWithExt)) {
+        return pathWithExt;
+      }
+    }
+    
+    // 尝试index文件
+    for (const ext of extensions) {
+      const indexPath = path.join(resolvedPath, `index${ext}`);
+      if (fs.existsSync(indexPath)) {
+        return indexPath;
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * 递归加载文件及其所有依赖
+   * @param {string} filePath - 入口文件路径
+   * @param {Set} loadedFiles - 已加载文件集合（防止循环依赖）
+   * @param {string} libraryDir - 物料库目录
+   * @returns {Object} 文件内容映射
+   */
+  loadFileWithDependencies(filePath, loadedFiles = new Set(), libraryDir = '') {
+    const fileMap = {};
+    
+    // 防止循环依赖
+    if (loadedFiles.has(filePath)) {
+      return fileMap;
+    }
+    
+    try {
+      // 检查文件是否存在
+      if (!fs.existsSync(filePath)) {
+        console.warn(`文件不存在: ${filePath}`);
+        return fileMap;
+      }
+      
+      // 标记文件为已加载
+      loadedFiles.add(filePath);
+      
+      // 读取文件内容
+      const fileContent = fs.readFileSync(filePath, 'utf8');
+      const relativePath = libraryDir ? path.relative(libraryDir, filePath) : path.basename(filePath);
+      fileMap[relativePath] = fileContent;
+      
+      console.log(`📄 加载文件: ${relativePath}`);
+      
+      // 解析依赖
+      const dependencies = this.parseDependencies(fileContent, filePath);
+      
+      // 递归加载依赖文件
+      for (const depPath of dependencies) {
+        // 只加载物料库内的文件
+        if (libraryDir && !depPath.startsWith(libraryDir)) {
+          continue;
+        }
+        
+        const depFiles = this.loadFileWithDependencies(depPath, loadedFiles, libraryDir);
+        Object.assign(fileMap, depFiles);
+      }
+      
+    } catch (error) {
+      console.error(`加载文件失败 ${filePath}:`, error.message);
+    }
+    
+    return fileMap;
+  }
+
+  /**
+   * 增强版的查找和加载源码文件方法
+   * @param {string} componentName - 组件名称
+   * @param {string} libraryName - 物料库名称
+   * @returns {Object|null} 包含所有相关文件的对象
+   */
+  findAndLoadSourceCodeFiles(componentName, libraryName) {
+    try {
+      // 根据不同的物料库使用不同的基础路径
+      let baseDir;
+      if (libraryName === 'fusion-ui') {
+        baseDir = path.join(__dirname, '..', '..', '..', 'lowcode-materials', 'packages', 'fusion-ui', 'src');
+      } else if (libraryName === 'fusion-lowcode-materials') {
+        baseDir = path.join(__dirname, '..', '..', '..', 'lowcode-materials', 'packages', 'fusion-lowcode-materials', 'src');
+      } else {
+        // 回退到原有的materials目录
+        const materialsDir = path.join(__dirname, '..', 'materials');
+        baseDir = path.join(materialsDir, libraryName, 'src');
+      }
+      
+      // 将组件名转换为kebab-case（如ProTable -> pro-table）
+      const kebabComponentName = componentName.replace(/([A-Z])/g, '-$1').toLowerCase().replace(/^-/, '');
+      
+      // 可能的入口文件路径模式
+      const possibleEntryPaths = [
+        // 直接在src下的文件
+        path.join(baseDir, `${componentName}.js`),
+        path.join(baseDir, `${componentName}.jsx`),
+        path.join(baseDir, `${componentName}.ts`),
+        path.join(baseDir, `${componentName}.tsx`),
+        path.join(baseDir, `${kebabComponentName}.js`),
+        path.join(baseDir, `${kebabComponentName}.jsx`),
+        path.join(baseDir, `${kebabComponentName}.ts`),
+        path.join(baseDir, `${kebabComponentName}.tsx`),
+        
+        // 在components目录下
+        path.join(baseDir, 'components', componentName, 'index.js'),
+        path.join(baseDir, 'components', componentName, 'index.jsx'),
+        path.join(baseDir, 'components', componentName, 'index.ts'),
+        path.join(baseDir, 'components', componentName, 'index.tsx'),
+        path.join(baseDir, 'components', kebabComponentName, 'index.js'),
+        path.join(baseDir, 'components', kebabComponentName, 'index.jsx'),
+        path.join(baseDir, 'components', kebabComponentName, 'index.ts'),
+        path.join(baseDir, 'components', kebabComponentName, 'index.tsx'),
+        
+        // 在components下的子目录中（如pro-table/components/pro-table/index.tsx）
+        path.join(baseDir, 'components', kebabComponentName, 'components', kebabComponentName, 'index.js'),
+        path.join(baseDir, 'components', kebabComponentName, 'components', kebabComponentName, 'index.jsx'),
+        path.join(baseDir, 'components', kebabComponentName, 'components', kebabComponentName, 'index.ts'),
+        path.join(baseDir, 'components', kebabComponentName, 'components', kebabComponentName, 'index.tsx'),
+        
+        // 直接在组件目录下的index文件
+        path.join(baseDir, componentName, 'index.js'),
+        path.join(baseDir, componentName, 'index.jsx'),
+        path.join(baseDir, componentName, 'index.ts'),
+        path.join(baseDir, componentName, 'index.tsx'),
+        path.join(baseDir, kebabComponentName, 'index.js'),
+        path.join(baseDir, kebabComponentName, 'index.jsx'),
+        path.join(baseDir, kebabComponentName, 'index.ts'),
+        path.join(baseDir, kebabComponentName, 'index.tsx'),
+        
+        // 组件同名文件
+        path.join(baseDir, componentName, `${componentName}.js`),
+        path.join(baseDir, componentName, `${componentName}.jsx`),
+        path.join(baseDir, componentName, `${componentName}.ts`),
+        path.join(baseDir, componentName, `${componentName}.tsx`),
+        path.join(baseDir, kebabComponentName, `${kebabComponentName}.js`),
+        path.join(baseDir, kebabComponentName, `${kebabComponentName}.jsx`),
+        path.join(baseDir, kebabComponentName, `${kebabComponentName}.ts`),
+        path.join(baseDir, kebabComponentName, `${kebabComponentName}.tsx`)
+      ];
+      
+      // 查找入口文件
+      let entryFilePath = null;
+      for (const filePath of possibleEntryPaths) {
+        if (fs.existsSync(filePath)) {
+          entryFilePath = filePath;
+          break;
+        }
+      }
+      
+      if (!entryFilePath) {
+        console.warn(`未找到组件 ${componentName} 的入口文件，已尝试路径:`);
+        possibleEntryPaths.slice(0, 5).forEach(p => console.log(`   - ${p}`));
+        console.log(`   ... 以及其他 ${possibleEntryPaths.length - 5} 个路径`);
+        return null;
+      }
+      
+      console.log(`🎯 找到入口文件: ${entryFilePath}`);
+      
+      // 递归加载入口文件及其所有依赖
+      const libraryDir = path.dirname(baseDir); // 获取物料库根目录
+      const allFiles = this.loadFileWithDependencies(entryFilePath, new Set(), libraryDir);
+      
+      console.log(`📦 ${componentName} 总共加载了 ${Object.keys(allFiles).length} 个文件`);
+      
+      return allFiles;
+      
+    } catch (error) {
+      console.error(`查找和加载 ${componentName} 源码文件失败:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * 查找物料源码文件（保留原有简单方法作为备用）
    * @param {string} componentName 组件名称
    * @param {string} libraryName 物料库名称
    * @returns {string|null} 源码文件路径
    */
   findSourceCodeFile(componentName, libraryName) {
     try {
-      const materialsDir = path.join(__dirname, '..', 'materials');
-      const libraryDir = path.join(materialsDir, libraryName);
+      // 根据不同的物料库使用不同的基础路径
+      let baseDir;
+      if (libraryName === 'fusion-ui') {
+        baseDir = path.join(__dirname, '..', '..', '..', 'lowcode-materials', 'packages', 'fusion-ui', 'src');
+      } else if (libraryName === 'fusion-lowcode-materials') {
+        baseDir = path.join(__dirname, '..', '..', '..', 'lowcode-materials', 'packages', 'fusion-lowcode-materials', 'src');
+      } else {
+        // 回退到原有的materials目录
+        const materialsDir = path.join(__dirname, '..', 'materials');
+        baseDir = path.join(materialsDir, libraryName, 'src');
+      }
       
-      // 可能的源码文件路径
+      // 将组件名转换为kebab-case（如ProTable -> pro-table）
+      const kebabComponentName = componentName.replace(/([A-Z])/g, '-$1').toLowerCase().replace(/^-/, '');
+      
+      // 可能的源码文件路径模式
       const possiblePaths = [
-        path.join(libraryDir, 'src', `${componentName}.js`),
-        path.join(libraryDir, 'src', `${componentName}.jsx`),
-        path.join(libraryDir, 'src', `${componentName}.ts`),
-        path.join(libraryDir, 'src', `${componentName}.tsx`),
-        path.join(libraryDir, 'src', componentName, 'index.js'),
-        path.join(libraryDir, 'src', componentName, 'index.jsx'),
-        path.join(libraryDir, 'src', componentName, 'index.ts'),
-        path.join(libraryDir, 'src', componentName, 'index.tsx'),
-        path.join(libraryDir, 'src', componentName, `${componentName}.js`),
-        path.join(libraryDir, 'src', componentName, `${componentName}.jsx`),
-        path.join(libraryDir, 'src', componentName, `${componentName}.ts`),
-        path.join(libraryDir, 'src', componentName, `${componentName}.tsx`),
-        path.join(libraryDir, `${componentName}.js`),
-        path.join(libraryDir, `${componentName}.jsx`),
-        path.join(libraryDir, `${componentName}.ts`),
-        path.join(libraryDir, `${componentName}.tsx`)
+        // 直接在src下的文件
+        path.join(baseDir, `${componentName}.js`),
+        path.join(baseDir, `${componentName}.jsx`),
+        path.join(baseDir, `${componentName}.ts`),
+        path.join(baseDir, `${componentName}.tsx`),
+        path.join(baseDir, `${kebabComponentName}.js`),
+        path.join(baseDir, `${kebabComponentName}.jsx`),
+        path.join(baseDir, `${kebabComponentName}.ts`),
+        path.join(baseDir, `${kebabComponentName}.tsx`),
+        
+        // 在components目录下
+        path.join(baseDir, 'components', componentName, 'index.js'),
+        path.join(baseDir, 'components', componentName, 'index.jsx'),
+        path.join(baseDir, 'components', componentName, 'index.ts'),
+        path.join(baseDir, 'components', componentName, 'index.tsx'),
+        path.join(baseDir, 'components', kebabComponentName, 'index.js'),
+        path.join(baseDir, 'components', kebabComponentName, 'index.jsx'),
+        path.join(baseDir, 'components', kebabComponentName, 'index.ts'),
+        path.join(baseDir, 'components', kebabComponentName, 'index.tsx'),
+        
+        // 在components下的子目录中（如pro-table/components/pro-table/index.tsx）
+        path.join(baseDir, 'components', kebabComponentName, 'components', kebabComponentName, 'index.js'),
+        path.join(baseDir, 'components', kebabComponentName, 'components', kebabComponentName, 'index.jsx'),
+        path.join(baseDir, 'components', kebabComponentName, 'components', kebabComponentName, 'index.ts'),
+        path.join(baseDir, 'components', kebabComponentName, 'components', kebabComponentName, 'index.tsx'),
+        
+        // 直接在组件目录下的index文件
+        path.join(baseDir, componentName, 'index.js'),
+        path.join(baseDir, componentName, 'index.jsx'),
+        path.join(baseDir, componentName, 'index.ts'),
+        path.join(baseDir, componentName, 'index.tsx'),
+        path.join(baseDir, kebabComponentName, 'index.js'),
+        path.join(baseDir, kebabComponentName, 'index.jsx'),
+        path.join(baseDir, kebabComponentName, 'index.ts'),
+        path.join(baseDir, kebabComponentName, 'index.tsx'),
+        
+        // 组件同名文件
+        path.join(baseDir, componentName, `${componentName}.js`),
+        path.join(baseDir, componentName, `${componentName}.jsx`),
+        path.join(baseDir, componentName, `${componentName}.ts`),
+        path.join(baseDir, componentName, `${componentName}.tsx`),
+        path.join(baseDir, kebabComponentName, `${kebabComponentName}.js`),
+        path.join(baseDir, kebabComponentName, `${kebabComponentName}.jsx`),
+        path.join(baseDir, kebabComponentName, `${kebabComponentName}.ts`),
+        path.join(baseDir, kebabComponentName, `${kebabComponentName}.tsx`)
       ];
-      
-      // 查找第一个存在的文件
+
       for (const filePath of possiblePaths) {
         if (fs.existsSync(filePath)) {
+          console.log(`🎯 找到入口文件: ${filePath}`);
           return filePath;
         }
       }
-      
+
+      console.log(`❌ 未找到组件 ${componentName} 的入口文件，已尝试路径:`);
+      possiblePaths.slice(0, 5).forEach(p => console.log(`   - ${p}`));
+      console.log(`   ... 以及其他 ${possiblePaths.length - 5} 个路径`);
       return null;
     } catch (error) {
-      console.error(`查找 ${componentName} 源码文件失败:`, error);
+      console.error(`查找源码文件时出错: ${error.message}`);
       return null;
     }
   }
@@ -235,16 +516,16 @@ class SiliconFlowService {
           const content = fs.readFileSync(filePath, 'utf-8');
           allDocsContent += `### ${file}\n\n${content}\n\n`;
           
-          // 尝试读取对应的源码文件
+          // 尝试读取对应的源码文件及其所有依赖
           const componentName = file.replace('.md', '');
-          const sourceCodePath = this.findSourceCodeFile(componentName, 'fusion-ui');
-          if (sourceCodePath) {
-            try {
-              const sourceCode = fs.readFileSync(sourceCodePath, 'utf-8');
-              allDocsContent += `#### ${componentName} 源码实现\n\n\`\`\`javascript\n${sourceCode}\n\`\`\`\n\n`;
-            } catch (sourceError) {
-              console.warn(`读取 ${componentName} 源码失败:`, sourceError.message);
-            }
+          const allSourceFiles = this.findAndLoadSourceCodeFiles(componentName, 'fusion-ui');
+          if (allSourceFiles && Object.keys(allSourceFiles).length > 0) {
+            allDocsContent += `#### ${componentName} 源码实现（包含所有依赖文件）\n\n`;
+            
+            // 遍历所有加载的文件
+            Object.entries(allSourceFiles).forEach(([filePath, fileContent]) => {
+              allDocsContent += `##### 文件: ${filePath}\n\n\`\`\`javascript\n${fileContent}\n\`\`\`\n\n`;
+            });
           }
           
           allDocsContent += '---\n\n';
@@ -261,16 +542,16 @@ class SiliconFlowService {
           const content = fs.readFileSync(filePath, 'utf-8');
           allDocsContent += `### ${file}\n\n${content}\n\n`;
           
-          // 尝试读取对应的源码文件
+          // 尝试读取对应的源码文件及其所有依赖
           const componentName = file.replace('.md', '');
-          const sourceCodePath = this.findSourceCodeFile(componentName, 'fusion-lowcode-materials');
-          if (sourceCodePath) {
-            try {
-              const sourceCode = fs.readFileSync(sourceCodePath, 'utf-8');
-              allDocsContent += `#### ${componentName} 源码实现\n\n\`\`\`javascript\n${sourceCode}\n\`\`\`\n\n`;
-            } catch (sourceError) {
-              console.warn(`读取 ${componentName} 源码失败:`, sourceError.message);
-            }
+          const allSourceFiles = this.findAndLoadSourceCodeFiles(componentName, 'fusion-lowcode-materials');
+          if (allSourceFiles && Object.keys(allSourceFiles).length > 0) {
+            allDocsContent += `#### ${componentName} 源码实现（包含所有依赖文件）\n\n`;
+            
+            // 遍历所有加载的文件
+            Object.entries(allSourceFiles).forEach(([filePath, fileContent]) => {
+              allDocsContent += `##### 文件: ${filePath}\n\n\`\`\`javascript\n${fileContent}\n\`\`\`\n\n`;
+            });
           }
           
           allDocsContent += '---\n\n';
