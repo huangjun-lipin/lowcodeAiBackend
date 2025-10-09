@@ -501,61 +501,39 @@ class SiliconFlowService {
   readAllDocsContent() {
     try {
       const materialsDir = path.join(__dirname, '..', 'materials');
-      const fusionUIDir = path.join(materialsDir, 'fusion-ui');
-      const fusionLowcodeDir = path.join(materialsDir, 'fusion-lowcode-materials');
       
       let allDocsContent = '';
       
-      // 读取fusion-ui目录下的文档和源码
-      if (fs.existsSync(fusionUIDir)) {
-        const fusionUIFiles = fs.readdirSync(fusionUIDir).filter(file => file.endsWith('.md'));
-        allDocsContent += '\n## Fusion UI 组件文档和源码\n\n';
+      // 递归读取materials目录下的所有md文件
+      const readMdFilesRecursively = (dir, categoryPath = '') => {
+        const items = fs.readdirSync(dir);
         
-        fusionUIFiles.forEach(file => {
-          const filePath = path.join(fusionUIDir, file);
-          const content = fs.readFileSync(filePath, 'utf-8');
-          allDocsContent += `### ${file}\n\n${content}\n\n`;
+        items.forEach(item => {
+          const itemPath = path.join(dir, item);
+          const stat = fs.statSync(itemPath);
           
-          // 尝试读取对应的源码文件及其所有依赖
-          const componentName = file.replace('.md', '');
-          const allSourceFiles = this.findAndLoadSourceCodeFiles(componentName, 'fusion-ui');
-          if (allSourceFiles && Object.keys(allSourceFiles).length > 0) {
-            allDocsContent += `#### ${componentName} 源码实现（包含所有依赖文件）\n\n`;
+          if (stat.isDirectory()) {
+            // 递归处理子目录
+            const subCategoryPath = categoryPath ? `${categoryPath}/${item}` : item;
+            readMdFilesRecursively(itemPath, subCategoryPath);
+          } else if (item.endsWith('.md') && item !== 'README.md') {
+            // 处理md文件，跳过README文件
+            const content = fs.readFileSync(itemPath, 'utf-8');
+            const categoryTitle = categoryPath || 'General';
             
-            // 遍历所有加载的文件
-            Object.entries(allSourceFiles).forEach(([filePath, fileContent]) => {
-              allDocsContent += `##### 文件: ${filePath}\n\n\`\`\`javascript\n${fileContent}\n\`\`\`\n\n`;
-            });
+            // 如果是新的分类，添加分类标题
+            if (!allDocsContent.includes(`## ${categoryTitle} 组件文档`)) {
+              allDocsContent += `\n## ${categoryTitle} 组件文档\n\n`;
+            }
+            
+            allDocsContent += `### ${item}\n\n${content}\n\n---\n\n`;
           }
-          
-          allDocsContent += '---\n\n';
         });
-      }
+      };
       
-      // 读取fusion-lowcode-materials目录下的文档和源码
-      if (fs.existsSync(fusionLowcodeDir)) {
-        const fusionLowcodeFiles = fs.readdirSync(fusionLowcodeDir).filter(file => file.endsWith('.md'));
-        allDocsContent += '\n## Fusion Lowcode Materials 组件文档和源码\n\n';
-        
-        fusionLowcodeFiles.forEach(file => {
-          const filePath = path.join(fusionLowcodeDir, file);
-          const content = fs.readFileSync(filePath, 'utf-8');
-          allDocsContent += `### ${file}\n\n${content}\n\n`;
-          
-          // 尝试读取对应的源码文件及其所有依赖
-          const componentName = file.replace('.md', '');
-          const allSourceFiles = this.findAndLoadSourceCodeFiles(componentName, 'fusion-lowcode-materials');
-          if (allSourceFiles && Object.keys(allSourceFiles).length > 0) {
-            allDocsContent += `#### ${componentName} 源码实现（包含所有依赖文件）\n\n`;
-            
-            // 遍历所有加载的文件
-            Object.entries(allSourceFiles).forEach(([filePath, fileContent]) => {
-              allDocsContent += `##### 文件: ${filePath}\n\n\`\`\`javascript\n${fileContent}\n\`\`\`\n\n`;
-            });
-          }
-          
-          allDocsContent += '---\n\n';
-        });
+      // 开始递归读取
+      if (fs.existsSync(materialsDir)) {
+        readMdFilesRecursively(materialsDir);
       }
       
       return allDocsContent;
@@ -1573,16 +1551,23 @@ ${docsContent}
 
   /**
    * 获取可用的物料组件列表
+   * @param {boolean} fromMd - 是否从md文件读取物料信息
    * @returns {Array} 组件列表
    */
-  getAvailableMaterials() {
+  getAvailableMaterials(fromMd = false) {
     try {
       const materialsDir = path.join(__dirname, '..', 'materials');
+      
+      if (fromMd) {
+        return this.getMaterialsFromMdFiles(materialsDir);
+      }
+      
       const fusionUIDir = path.join(materialsDir, 'fusion-ui');
+      const fusionLowcodeDir = path.join(materialsDir, 'fusion-lowcode-materials');
       
       const components = [];
       
-      // 优先读取fusion-ui目录下的组件
+      // 读取fusion-ui目录下的md文件
       if (fs.existsSync(fusionUIDir)) {
         const fusionUIFiles = fs.readdirSync(fusionUIDir).filter(file => file.endsWith('.md'));
         fusionUIFiles.forEach(file => {
@@ -1595,19 +1580,18 @@ ${docsContent}
         });
       }
       
-      // 注释掉fusion-lowcode-materials的读取，确保只使用fusion-ui组件
-      // const fusionLowcodeDir = path.join(materialsDir, 'fusion-lowcode-materials');
-      // if (fs.existsSync(fusionLowcodeDir)) {
-      //   const fusionLowcodeFiles = fs.readdirSync(fusionLowcodeDir).filter(file => file.endsWith('.md'));
-      //   fusionLowcodeFiles.forEach(file => {
-      //     const componentName = file.replace('.md', '');
-      //     components.push({
-      //       name: componentName,
-      //       category: 'fusion-lowcode-materials',
-      //       file: file
-      //     });
-      //   });
-      // }
+      // 读取fusion-lowcode-materials目录下的md文件
+      if (fs.existsSync(fusionLowcodeDir)) {
+        const fusionLowcodeFiles = fs.readdirSync(fusionLowcodeDir).filter(file => file.endsWith('.md'));
+        fusionLowcodeFiles.forEach(file => {
+          const componentName = file.replace('.md', '');
+          components.push({
+            name: componentName,
+            category: 'fusion-lowcode-materials',
+            file: file
+          });
+        });
+      }
       
       return components;
     } catch (error) {
@@ -1635,6 +1619,52 @@ ${docsContent}
         'col',
         'box'
       ];
+    }
+  }
+
+  /**
+   * 从所有md文件获取物料信息
+   * @param {string} materialsDir - 物料目录
+   * @returns {Array} 物料列表
+   */
+  getMaterialsFromMdFiles(materialsDir) {
+    const materials = [];
+    
+    try {
+      // 递归扫描materials目录下的所有md文件
+      const scanDirectory = (dir, category = '') => {
+        const items = fs.readdirSync(dir);
+        
+        items.forEach(item => {
+          const itemPath = path.join(dir, item);
+          const stat = fs.statSync(itemPath);
+          
+          if (stat.isDirectory()) {
+            // 递归扫描子目录
+            const subCategory = category ? `${category}/${item}` : item;
+            scanDirectory(itemPath, subCategory);
+          } else if (item.endsWith('.md') && item !== 'README.md') {
+            // 跳过README文件，处理其他md文件
+            const name = item.replace('.md', '');
+            const materialCategory = category || 'general';
+            
+            materials.push({
+              name,
+              category: materialCategory,
+              file: item,
+              path: path.relative(materialsDir, itemPath)
+            });
+          }
+        });
+      };
+      
+      scanDirectory(materialsDir);
+      
+      console.log(`📦 从md文件加载了 ${materials.length} 个物料`);
+      return materials;
+    } catch (error) {
+      console.error('从md文件获取物料列表失败:', error);
+      return [];
     }
   }
 
@@ -2200,6 +2230,214 @@ ${materials ? materials.map(m => `- ${m.name} (${m.library})`).join('\n') : '无
     }
 
     return sourceFiles;
+  }
+
+  /**
+   * 从md文件读取物料信息
+   * @param {string} materialName - 物料名称
+   * @param {string} category - 物料分类
+   * @returns {Object} 物料信息
+   */
+  getMaterialInfoFromMd(materialName, category) {
+    try {
+      const materialsDir = path.join(__dirname, '..', 'materials');
+      const categoryDir = path.join(materialsDir, category);
+      const mdFilePath = path.join(categoryDir, `${materialName}.md`);
+      
+      if (!fs.existsSync(mdFilePath)) {
+        console.warn(`物料md文件不存在: ${mdFilePath}`);
+        return null;
+      }
+      
+      const mdContent = fs.readFileSync(mdFilePath, 'utf8');
+      
+      // 解析md文件内容
+      const materialInfo = this.parseMaterialMd(mdContent, materialName, category);
+      
+      return materialInfo;
+    } catch (error) {
+      console.error(`读取物料md文件失败 ${category}:${materialName}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * 解析物料md文件内容
+   * @param {string} mdContent - md文件内容
+   * @param {string} materialName - 物料名称
+   * @param {string} category - 物料分类
+   * @returns {Object} 解析后的物料信息
+   */
+  parseMaterialMd(mdContent, materialName, category) {
+    const materialInfo = {
+      name: materialName,
+      category: category,
+      title: '',
+      description: '',
+      props: {},
+      interfaces: {},
+      examples: [],
+      rawContent: mdContent
+    };
+
+    // 解析标题
+    const titleMatch = mdContent.match(/^#\s+(.+)$/m);
+    if (titleMatch) {
+      materialInfo.title = titleMatch[1].trim();
+    }
+
+    // 解析基本信息
+    const basicInfoSection = this.extractSection(mdContent, '## 基本信息');
+    if (basicInfoSection) {
+      const componentNameMatch = basicInfoSection.match(/- \*\*组件名称\*\*:\s*(.+)$/m);
+      const componentTitleMatch = basicInfoSection.match(/- \*\*组件标题\*\*:\s*(.+)$/m);
+      const componentCategoryMatch = basicInfoSection.match(/- \*\*组件分类\*\*:\s*(.+)$/m);
+      const npmPackageMatch = basicInfoSection.match(/- \*\*NPM包\*\*:\s*(.+)$/m);
+      
+      if (componentNameMatch) materialInfo.componentName = componentNameMatch[1].trim();
+      if (componentTitleMatch) materialInfo.componentTitle = componentTitleMatch[1].trim();
+      if (componentCategoryMatch) materialInfo.componentCategory = componentCategoryMatch[1].trim();
+      if (npmPackageMatch) materialInfo.npmPackage = npmPackageMatch[1].trim();
+    }
+
+    // 解析组件描述
+    const descriptionSection = this.extractSection(mdContent, '## 组件描述');
+    if (descriptionSection) {
+      materialInfo.description = descriptionSection.replace(/## 组件描述\s*\n/, '').trim();
+    }
+
+    // 解析属性配置
+    const propsSection = this.extractSection(mdContent, '## 属性配置');
+    if (propsSection) {
+      materialInfo.props = this.parsePropsFromMd(propsSection);
+    }
+
+    // 解析接口定义
+    const interfaceSection = this.extractSection(mdContent, '## 核心接口定义');
+    if (interfaceSection) {
+      materialInfo.interfaces = this.parseInterfacesFromMd(interfaceSection);
+    }
+
+    // 解析使用示例
+    const exampleSection = this.extractSection(mdContent, '## 使用示例');
+    if (exampleSection) {
+      materialInfo.examples = this.parseExamplesFromMd(exampleSection);
+    }
+
+    return materialInfo;
+  }
+
+  /**
+   * 从md内容中提取指定章节
+   * @param {string} content - md内容
+   * @param {string} sectionTitle - 章节标题
+   * @returns {string} 章节内容
+   */
+  extractSection(content, sectionTitle) {
+    const regex = new RegExp(`${sectionTitle}([\\s\\S]*?)(?=\\n## |$)`, 'i');
+    const match = content.match(regex);
+    return match ? match[1].trim() : null;
+  }
+
+  /**
+   * 从md内容中解析属性信息
+   * @param {string} propsSection - 属性章节内容
+   * @returns {Object} 属性信息
+   */
+  parsePropsFromMd(propsSection) {
+    const props = {};
+    
+    // 解析表格格式的属性
+    const tableMatch = propsSection.match(/\|[\s\S]*?\|/g);
+    if (tableMatch) {
+      const lines = tableMatch.join('\n').split('\n').filter(line => line.trim() && !line.includes('---'));
+      
+      if (lines.length > 1) {
+        const headers = lines[0].split('|').map(h => h.trim()).filter(h => h);
+        
+        for (let i = 1; i < lines.length; i++) {
+          const cells = lines[i].split('|').map(c => c.trim()).filter(c => c);
+          if (cells.length >= headers.length) {
+            const propName = cells[0];
+            props[propName] = {
+              type: cells[1] || 'unknown',
+              required: cells[2] === '是',
+              defaultValue: cells[3] || undefined,
+              description: cells[4] || ''
+            };
+          }
+        }
+      }
+    }
+
+    // 解析列表格式的属性
+    const propMatches = propsSection.match(/#### (.+)\n- \*\*描述\*\*:\s*(.+)\n- \*\*类型\*\*:\s*(.+)/g);
+    if (propMatches) {
+      propMatches.forEach(match => {
+        const propMatch = match.match(/#### (.+)\n- \*\*描述\*\*:\s*(.+)\n- \*\*类型\*\*:\s*(.+)/);
+        if (propMatch) {
+          const propName = propMatch[1].trim();
+          props[propName] = {
+            description: propMatch[2].trim(),
+            type: propMatch[3].trim()
+          };
+        }
+      });
+    }
+
+    return props;
+  }
+
+  /**
+   * 从md内容中解析接口定义
+   * @param {string} interfaceSection - 接口章节内容
+   * @returns {Object} 接口信息
+   */
+  parseInterfacesFromMd(interfaceSection) {
+    const interfaces = {};
+    
+    // 解析TypeScript接口定义
+    const interfaceMatches = interfaceSection.match(/### (.+)\n[\s\S]*?```typescript\n([\s\S]*?)\n```/g);
+    if (interfaceMatches) {
+      interfaceMatches.forEach(match => {
+        const interfaceMatch = match.match(/### (.+)\n[\s\S]*?```typescript\n([\s\S]*?)\n```/);
+        if (interfaceMatch) {
+          const interfaceName = interfaceMatch[1].trim();
+          const interfaceCode = interfaceMatch[2].trim();
+          interfaces[interfaceName] = {
+            name: interfaceName,
+            code: interfaceCode
+          };
+        }
+      });
+    }
+
+    return interfaces;
+  }
+
+  /**
+   * 从md内容中解析使用示例
+   * @param {string} exampleSection - 示例章节内容
+   * @returns {Array} 示例列表
+   */
+  parseExamplesFromMd(exampleSection) {
+    const examples = [];
+    
+    // 解析代码块示例
+    const codeMatches = exampleSection.match(/```(\w+)?\n([\s\S]*?)\n```/g);
+    if (codeMatches) {
+      codeMatches.forEach(match => {
+        const codeMatch = match.match(/```(\w+)?\n([\s\S]*?)\n```/);
+        if (codeMatch) {
+          examples.push({
+            language: codeMatch[1] || 'javascript',
+            code: codeMatch[2].trim()
+          });
+        }
+      });
+    }
+
+    return examples;
   }
 }
 

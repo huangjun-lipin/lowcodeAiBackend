@@ -749,38 +749,38 @@ ${materialList}
   async getMaterialSourceCode(materialName, libraryName) {
     const materialKey = `${libraryName}:${materialName}`;
     
-    // 检查源码缓存
+    // 检查MD内容缓存
     if (this.sourceCodeCache.has(materialKey)) {
-      console.log(`📋 从缓存获取 ${materialName} 源代码`);
+      console.log(`📋 从缓存获取 ${materialName} MD文件内容`);
       return this.sourceCodeCache.get(materialKey);
     }
     
-    const material = this.materialCache.get(materialKey);
-    
-    if (!material) {
-      throw new Error(`物料 ${materialName} 不存在`);
-    }
-
-    const sourceCode = {
-      meta: material.metaContent,
-      snippets: material.snippetsContent,
-      source: null
-    };
-
-    // 如果有源代码，读取源代码文件
-    if (material.hasSource) {
-      const basePath = libraryName === 'fusion-ui' 
-        ? this.materialPaths.fusionUI 
-        : this.materialPaths.fusionLowcodeMaterials;
+    // 使用siliconFlowService的getMaterialInfoFromMd方法获取MD文件内容
+    try {
+      const siliconFlowService = require('./siliconFlowService');
+      const materialInfo = await siliconFlowService.getMaterialInfoFromMd(libraryName, materialName);
       
-      sourceCode.source = await this.readSourceFiles(basePath, materialName);
+      if (!materialInfo) {
+        throw new Error(`物料 ${materialName} 的MD文件不存在`);
+      }
+
+      const mdContent = {
+        mdContent: materialInfo.mdContent,
+        componentName: materialInfo.componentName,
+        title: materialInfo.title,
+        category: materialInfo.category,
+        npmPackage: materialInfo.npmPackage
+      };
+
+      // 将结果缓存
+      this.sourceCodeCache.set(materialKey, mdContent);
+      console.log(`💾 已缓存 ${materialName} MD文件内容`);
+
+      return mdContent;
+    } catch (error) {
+      console.error(`❌ 获取 ${materialName} MD文件内容失败:`, error);
+      throw new Error(`获取物料 ${materialName} 的MD文件内容失败: ${error.message}`);
     }
-
-    // 将结果缓存
-    this.sourceCodeCache.set(materialKey, sourceCode);
-    console.log(`💾 已缓存 ${materialName} 源代码`);
-
-    return sourceCode;
   }
 
   /**
@@ -1115,27 +1115,30 @@ ${materialList}
   buildOptimizationPrompt(materialSources, iterationCount) {
     let sourcesInfo = '';
     if (materialSources && Object.keys(materialSources).length > 0) {
-      sourcesInfo = '可用物料源代码信息：\n';
-      for (const [materialName, sourceData] of Object.entries(materialSources)) {
-        // 跳过无效的物料名称和空的源代码数据
-        if (!materialName || materialName === '[object Object]' || !sourceData) {
-          console.warn(`⚠️ 跳过无效物料: ${materialName}, sourceData:`, sourceData);
+      sourcesInfo = '可用物料MD文档信息：\n';
+      for (const [materialName, mdData] of Object.entries(materialSources)) {
+        // 跳过无效的物料名称和空的MD数据
+        if (!materialName || materialName === '[object Object]' || !mdData) {
+          console.warn(`⚠️ 跳过无效物料: ${materialName}, mdData:`, mdData);
           continue;
         }
         
         sourcesInfo += `\n=== ${materialName} ===\n`;
-        if (sourceData.meta) {
-          sourcesInfo += `Meta配置:\n${sourceData.meta.substring(0, 1000)}...\n`;
+        if (mdData.title) {
+          sourcesInfo += `组件标题: ${mdData.title}\n`;
         }
-        if (sourceData.snippets) {
-          sourcesInfo += `Snippets示例 (重要参考):\n${sourceData.snippets.substring(0, 800)}...\n`;
-          sourcesInfo += `💡 请特别关注snippets中的配置示例，这些是该物料的最佳实践配置\n`;
+        if (mdData.componentName) {
+          sourcesInfo += `组件名称: ${mdData.componentName}\n`;
         }
-        if (sourceData.source) {
-          sourcesInfo += `源代码:\n`;
-          for (const [fileName, content] of Object.entries(sourceData.source)) {
-            sourcesInfo += `${fileName}:\n${content.substring(0, 800)}...\n`;
-          }
+        if (mdData.category) {
+          sourcesInfo += `组件分类: ${mdData.category}\n`;
+        }
+        if (mdData.npmPackage) {
+          sourcesInfo += `NPM包: ${mdData.npmPackage}\n`;
+        }
+        if (mdData.mdContent) {
+          sourcesInfo += `MD文档内容:\n${mdData.mdContent.substring(0, 2000)}...\n`;
+          sourcesInfo += `💡 请特别关注MD文档中的使用示例和API说明，这些是该物料的最佳实践配置\n`;
         }
       }
     }
@@ -1151,16 +1154,16 @@ ${sourcesInfo}
 4. 根据物料的实际能力和配置进行合理的属性设置
 5. 确保生成的代码可以正常运行
 
-**重要：充分利用snippets示例进行优化**
-6. **参考snippets最佳实践**：
-   - 使用snippets中展示的组件配置作为优化的参考标准
-   - 借鉴snippets中的props设置来完善组件属性
-   - 参考snippets中的数据结构来优化dataSource和state
-   - 根据snippets的使用场景来调整组件的交互逻辑
-7. **基于snippets生成真实效果**：
-   - 将snippets中的示例数据扩展为更丰富的假数据
-   - 根据snippets的配置模式来设计更完整的功能
-   - 参考snippets的组件组合方式来优化页面布局
+**重要：充分利用MD文档示例进行优化**
+6. **参考MD文档最佳实践**：
+   - 使用MD文档中展示的组件配置作为优化的参考标准
+   - 借鉴MD文档中的props设置来完善组件属性
+   - 参考MD文档中的数据结构来优化dataSource和state
+   - 根据MD文档的使用场景来调整组件的交互逻辑
+7. **基于MD文档生成真实效果**：
+   - 将MD文档中的示例数据扩展为更丰富的假数据
+   - 根据MD文档的配置模式来设计更完整的功能
+   - 参考MD文档的组件组合方式来优化页面布局
 
 **重要要求 - 必须包含假数据和交互功能：**
 6. **数据要求**：必须为所有组件提供真实的假数据，包括：

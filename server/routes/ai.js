@@ -131,16 +131,18 @@ router.post('/generate-schema', async (req, res) => {
 
 /**
  * 获取可用物料列表接口
- * GET /api/ai/materials
+ * GET /api/ai/materials?fromMd=true
  */
 router.get('/materials', (req, res) => {
   try {
-    const materials = siliconFlowService.getAvailableMaterials();
+    const fromMd = req.query.fromMd === 'true';
+    const materials = siliconFlowService.getAvailableMaterials(fromMd);
     
     res.json({
       success: true,
       materials: materials,
       count: materials.length,
+      source: fromMd ? 'md_files' : 'fusion_ui',
       timestamp: Date.now()
     });
 
@@ -774,6 +776,50 @@ router.post('/update-element-stream', async (req, res) => {
 
     res.write(`data: ${JSON.stringify({ type: 'end' })}\n\n`);
     res.end();
+  }
+});
+
+/**
+ * 获取物料详细信息接口（从md文件）
+ * GET /api/ai/material-info/:category/:name
+ */
+router.get('/material-info/:category/:name', (req, res) => {
+  try {
+    const { category, name } = req.params;
+    
+    if (!category || !name) {
+      return res.status(400).json({
+        success: false,
+        message: '请求参数错误：category和name不能为空',
+        error: 'INVALID_PARAMS'
+      });
+    }
+    
+    const materialInfo = siliconFlowService.getMaterialInfoFromMd(name, category);
+    
+    if (!materialInfo) {
+      return res.status(404).json({
+        success: false,
+        message: `物料信息不存在: ${category}/${name}`,
+        error: 'MATERIAL_NOT_FOUND'
+      });
+    }
+    
+    res.json({
+      success: true,
+      materialInfo: materialInfo,
+      timestamp: Date.now()
+    });
+
+  } catch (error) {
+    console.error('[AI Material Info] 获取物料详细信息失败:', error);
+    
+    res.status(500).json({
+      success: false,
+      message: '获取物料详细信息失败',
+      error: error.message,
+      timestamp: Date.now()
+    });
   }
 });
 
