@@ -1950,6 +1950,213 @@ ${docsContent}
   }
 
   /**
+   * 流式局部修改选中元素的schema
+   * @param {string} userPrompt 用户输入的修改需求
+   * @param {object} context 上下文信息，包含selectedElement、fullSchema等
+   * @param {function} onProgress 进度回调函数（可选）
+   * @returns {Promise<object>} 修改后的元素schema
+   */
+  async updateElementStream(userPrompt, context = {}, onProgress = null) {
+    try {
+      // 记录API调用开始时间
+      const apiStartTime = Date.now();
+      console.log('🚀 开始调用大模型API进行局部修改 (流式)...');
+      
+      const { selectedElement, fullSchema, materials } = context;
+      
+      // 构建局部修改的系统提示词
+      const systemPrompt = this.getElementUpdateSystemPrompt();
+      
+      const messages = [
+        {
+          role: 'system',
+          content: systemPrompt
+        },
+        {
+          role: 'user',
+          content: `请根据以下信息修改选中的元素：
+
+**用户修改需求：**
+${userPrompt}
+
+**选中的元素schema：**
+${JSON.stringify(selectedElement, null, 2)}
+
+**完整页面schema（用于理解上下文）：**
+${JSON.stringify(fullSchema, null, 2)}
+
+**可用物料列表：**
+${materials ? materials.map(m => `- ${m.name} (${m.library})`).join('\n') : '无'}
+
+请只修改选中的元素及其子元素，不要修改其父元素或其他无关元素。返回修改后的完整元素schema。`
+        }
+      ];
+
+      const requestData = {
+        model: 'deepseek-ai/DeepSeek-V3',
+        messages: messages,
+        temperature: 0.3,
+        max_tokens: 32000,
+        stream: true // 启用流式输出
+      };
+
+      // 发送进度回调
+      if (onProgress) {
+        onProgress({
+          type: 'progress',
+          message: '正在连接AI服务...',
+          timestamp: Date.now()
+        });
+      }
+
+      console.log('🚀 [Silicon Flow API - updateElementStream] 发送流式请求');
+
+      const response = await this.client.post('/v1/chat/completions', requestData, {
+        ...this.defaultConfig,
+        responseType: 'stream'
+      });
+
+      let fullContent = '';
+      let buffer = '';
+
+      // 发送进度回调
+      if (onProgress) {
+        onProgress({
+          type: 'progress',
+          message: '开始接收AI回答...',
+          timestamp: Date.now()
+        });
+      }
+
+      return new Promise((resolve, reject) => {
+        response.data.on('data', (chunk) => {
+          buffer += chunk.toString();
+          
+          // 处理SSE数据格式
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // 保留不完整的行
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              
+              if (data === '[DONE]') {
+                // 流式传输结束
+                console.log('📥 [Silicon Flow API] 局部修改流式传输完成');
+                
+                try {
+                  // 解析完整内容
+                  const parsedResult = this.parseComplexSchema(fullContent);
+                  
+                  // 确保有ID（如果schema是对象且没有ID）
+                  if (parsedResult && typeof parsedResult === 'object' && !parsedResult.id) {
+                    parsedResult.id = selectedElement.id; // 保持原有ID
+                  }
+
+                  console.log('✅ 局部修改Schema生成完成');
+                  resolve(parsedResult);
+                } catch (parseError) {
+                  console.error('❌ 解析局部修改结果失败:', parseError);
+                  reject(parseError);
+                }
+                return;
+              }
+              
+              try {
+                const chunk = JSON.parse(data);
+                if (chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content) {
+                  const content = chunk.choices[0].delta.content;
+                  fullContent += content;
+                  
+                  // 发送流式内容回调
+                  if (onProgress) {
+                    onProgress({
+                      type: 'stream',
+                      content: content,
+                      fullContent: fullContent,
+                      timestamp: Date.now()
+                    });
+                  }
+                }
+              } catch (chunkError) {
+                // 忽略解析错误，继续处理下一个chunk
+              }
+            }
+          }
+        });
+
+        response.data.on('end', () => {
+          if (fullContent.trim()) {
+            try {
+              // 解析完整内容
+              const parsedResult = this.parseComplexSchema(fullContent);
+              
+              // 确保有ID（如果schema是对象且没有ID）
+              if (parsedResult && typeof parsedResult === 'object' && !parsedResult.id) {
+                parsedResult.id = selectedElement.id; // 保持原有ID
+              }
+
+              resolve(parsedResult);
+            } catch (parseError) {
+              reject(parseError);
+            }
+          } else {
+            reject(new Error('没有接收到有效的响应内容'));
+          }
+        });
+
+        response.data.on('error', (error) => {
+          console.error('🚨 局部修改流式响应错误:', error);
+          reject(error);
+        });
+      });
+
+    } catch (error) {
+      console.error('🚨 Silicon Flow API局部修改调用失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取局部修改的系统提示词
+   */
+  getElementUpdateSystemPrompt() {
+    return `你是一个专业的低代码平台AI助手，专门负责修改页面中选中的元素。
+
+## 核心任务
+你需要根据用户的修改需求，只修改选中的元素及其子元素，不要修改其父元素或其他无关元素。
+
+## 修改原则
+1. **局部修改**：只修改选中的元素及其子元素
+2. **保持ID**：保持选中元素的原有ID不变
+3. **保持结构**：不要改变元素在整体结构中的位置
+4. **精准修改**：只修改用户明确要求修改的属性和功能
+5. **兼容性**：确保修改后的元素与页面其他部分兼容
+
+## 可修改的内容
+- 元素的props属性
+- 元素的样式
+- 元素的子元素
+- 元素的事件处理
+- 元素的数据绑定
+- 元素的交互逻辑
+
+## 不可修改的内容
+- 元素的ID（必须保持不变）
+- 元素的父元素
+- 页面中的其他元素
+- 全局的state和methods（除非用户明确要求）
+
+## 输出格式
+请直接返回修改后的完整元素schema，格式为JSON。确保：
+1. 保持原有的ID
+2. 只包含修改后的目标元素
+3. 结构完整且符合低代码引擎规范
+
+现在请根据用户需求进行精准的局部修改。`;
+  }
+
+  /**
    * 读取物料源代码文件
    */
   async readSourceFiles(basePath, materialName) {

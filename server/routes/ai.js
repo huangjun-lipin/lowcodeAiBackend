@@ -674,4 +674,107 @@ router.get('/material-service-health', async (req, res) => {
   }
 });
 
+/**
+ * 流式局部修改选中元素的schema接口 (Server-Sent Events)
+ * POST /api/ai/update-element-stream
+ */
+router.post('/update-element-stream', async (req, res) => {
+  try {
+    const { prompt, selectedElement, fullSchema, materials } = req.body;
+
+    // 验证请求参数
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: '请求参数错误：prompt不能为空',
+        error: 'INVALID_PROMPT'
+      });
+    }
+
+    if (!selectedElement || !selectedElement.id) {
+      return res.status(400).json({
+        success: false,
+        message: '请求参数错误：selectedElement不能为空且必须包含id',
+        error: 'INVALID_SELECTED_ELEMENT'
+      });
+    }
+
+    // 设置SSE响应头
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+
+    // 发送开始事件
+    res.write(`data: ${JSON.stringify({
+      type: 'start',
+      message: '开始修改选中元素...',
+      timestamp: Date.now()
+    })}\n\n`);
+
+    // 记录请求日志
+    console.log(`[AI Element Update Stream] 收到局部修改请求: ${prompt.substring(0, 100)}${prompt.length > 100 ? '...' : ''}`);
+    console.log(`[AI Element Update Stream] 选中元素ID: ${selectedElement.id}, 组件: ${selectedElement.componentName}`);
+
+    // 构建局部修改的上下文
+    const context = {
+      selectedElement,
+      fullSchema,
+      materials: materials || siliconFlowService.getAvailableMaterials()
+    };
+
+    // 调用Silicon Flow服务进行局部修改 (流式版本)
+    const updatedElement = await siliconFlowService.updateElementStream(prompt, context, (progressEvent) => {
+      // 转发进度事件到前端
+      res.write(`data: ${JSON.stringify(progressEvent)}\n\n`);
+    });
+
+    // 记录修改结果到日志文件
+    if (updatedElement) {
+      await writeSchemaLog(prompt, updatedElement, {
+        materials: materials || [],
+        generationMethod: 'element_update_stream',
+        selectedElementId: selectedElement.id,
+        selectedElementComponent: selectedElement.componentName,
+        hasFullSchema: !!fullSchema
+      });
+    }
+
+    // 发送最终结果
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      success: true,
+      message: `已根据您的需求"${prompt}"修改选中元素`,
+      updatedElement: updatedElement,
+      elementId: selectedElement.id,
+      timestamp: Date.now()
+    })}\n\n`);
+
+    // 记录成功日志
+    console.log(`[AI Element Update Stream] 成功修改元素，ID: ${selectedElement.id}, 组件: ${updatedElement.componentName}`);
+
+    // 结束流
+    res.write(`data: ${JSON.stringify({ type: 'end' })}\n\n`);
+    res.end();
+
+  } catch (error) {
+    console.error('[AI Element Update Stream] 修改失败:', error);
+
+    // 发送错误事件
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      success: false,
+      message: error.message || '修改失败，请稍后重试',
+      error: error.name || 'UPDATE_ERROR',
+      timestamp: Date.now()
+    })}\n\n`);
+
+    res.write(`data: ${JSON.stringify({ type: 'end' })}\n\n`);
+    res.end();
+  }
+});
+
 module.exports = router;
