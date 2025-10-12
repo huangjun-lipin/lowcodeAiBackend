@@ -4,6 +4,7 @@ const path = require('path');
 const JSON5 = require('json5');
 const Ajv = require('ajv');
 const { jsonrepair } = require('jsonrepair');
+const ragService = require('./ragService');
 
 class SiliconFlowService {
   constructor() {
@@ -166,6 +167,11 @@ class SiliconFlowService {
         }
       },
       additionalProperties: true
+    });
+
+    // 异步构建或加载RAG索引（不阻塞启动）
+    ragService.buildIndexIfNeeded().catch(err => {
+      console.warn('RAG 索引构建失败：', err?.message || err);
     });
   }
 
@@ -546,8 +552,10 @@ class SiliconFlowService {
   /**
    * 生成低代码schema的系统提示词
    */
-  getSystemPrompt() {
-    const docsContent = this.readAllDocsContent();
+  getSystemPrompt(retrievedDocs = []) {
+    const docsContext = Array.isArray(retrievedDocs) && retrievedDocs.length > 0
+      ? retrievedDocs.map((d, i) => `【参考${i + 1} | ${d.title} | ${d.category}】\n${d.text}`).join('\n\n')
+      : '（暂无相关文档片段，按通用规范生成）';
     
     return `你是一个专业的低代码平台AI助手，专门帮助用户生成符合阿里低代码引擎规范的完整页面schema。
 
@@ -655,9 +663,9 @@ class SiliconFlowService {
 - Button（不存在，应使用ProForm内置按钮或操作配置）
 - Table（不存在，应使用ProTable）
 
-以下是完整的组件文档，包含每个组件的详细属性配置、使用方法和示例：
+以下是检索得到的相关组件文档片段（基于RAG）：
 
-${docsContent}
+${docsContext}
 
 ## 重要：参考Demo示例
 
@@ -1207,10 +1215,13 @@ ${docsContent}
       const apiStartTime = Date.now();
       console.log('🚀 开始调用大模型API (流式)...');
       
+      // 基于用户需求进行文档检索，缩短上下文
+      const retrievedDocs = await ragService.search(userPrompt, 12);
+      await this.writeShortContextLog(userPrompt, retrievedDocs, 'generateSchemaStream');
       const messages = [
         {
           role: 'system',
-          content: this.getSystemPrompt()
+          content: this.getSystemPrompt(retrievedDocs)
         },
         {
           role: 'user',
@@ -1219,12 +1230,9 @@ ${docsContent}
       ];
 
       // 如果有上下文信息，添加到消息中
-      if (context.currentSchema) {
-        messages.splice(1, 0, {
-          role: 'user',
-          content: `当前页面已有的schema结构：${JSON.stringify(context.currentSchema, null, 2)}`
-        });
-      }
+      
+      // 记录完整提示语到专门的日志文件（流式版本）
+      await this.writeCompletePromptLog(userPrompt, messages, 'generateSchemaStream');
 
       const requestData = {
         model: 'deepseek-ai/DeepSeek-V3',
@@ -1378,10 +1386,13 @@ ${docsContent}
       const apiStartTime = Date.now();
       console.log('🚀 开始调用大模型API...');
       
+      // 基于用户需求进行文档检索，缩短上下文
+      const retrievedDocs = await ragService.search(userPrompt, 12);
+      await this.writeShortContextLog(userPrompt, retrievedDocs, 'generateSchema');
       const messages = [
         {
           role: 'system',
-          content: this.getSystemPrompt()
+          content: this.getSystemPrompt(retrievedDocs)
         },
         {
           role: 'user',
@@ -1944,6 +1955,42 @@ ${docsContent}
       console.log(`📋 完整提示语已记录(SiliconFlow): 用户需求="${userPrompt.substring(0, 50)}..." 方法=${method} 消息数=${messages.length} 总长度=${promptLogEntry.totalPromptLength}`);
     } catch (error) {
       console.error('❌ 写入完整提示语日志文件失败:', error.message);
+    }
+  }
+
+
+  /**
+   * 记录缩短后的上下文到日志
+   */
+  async writeShortContextLog(userPrompt, retrievedDocs, method) {
+    try {
+      const timestamp = new Date().toISOString();
+      const docsArr = Array.isArray(retrievedDocs) ? retrievedDocs : [];
+      const entry = {
+        timestamp,
+        userPrompt,
+        method,
+        docCount: docsArr.length,
+        docsPreview: docsArr.map((d, i) => ({
+          index: i,
+          title: d.title || d.file || d.id || `doc_${i}`,
+          category: d.category || d.section || 'unknown',
+          score: d.score ?? d.similarity ?? undefined,
+          contentLength: (d.text || d.content || '').length,
+          contentPreview: (d.text || d.content || '').substring(0, 200) + (((d.text || d.content || '').length > 200) ? '...' : '')
+        })),
+        docs: docsArr.map(d => ({
+          title: d.title || d.file || d.id || null,
+          category: d.category || d.section || null,
+          content: d.text || d.content || ''
+        }))
+      };
+      const filePath = path.join(this.logsDir, 'short_contexts_silicon_flow.log');
+      const line = JSON.stringify(entry, null, 2) + '\n' + '---CONTEXT_SEPARATOR---\n';
+      await fs.promises.appendFile(filePath, line, 'utf8');
+      console.log(`📦 已记录缩短上下文(SiliconFlow): 方法=${method} 文档数=${entry.docCount}`);
+    } catch (err) {
+      console.error('❌ 写入缩短上下文日志失败:', err.message);
     }
   }
 
